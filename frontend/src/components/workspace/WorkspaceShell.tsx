@@ -5,10 +5,7 @@ import { createPortal } from 'react-dom';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { ImageGenerationWorkbench } from '@/components/ImageGenerationWorkbench';
 import { ReversePromptForm } from '@/components/ReversePromptForm';
-import { GifGenerationWorkspace } from '@/components/GifGenerationWorkspace';
 import { AgentChatWorkspace } from '@/components/agent/AgentChatWorkspace';
-import { AssetsWorkspace } from '@/components/assets/AssetsWorkspace';
-import { CanvasWorkspace } from '@/components/canvas/CanvasWorkspace';
 import { PromptGallery } from '@/components/PromptGallery';
 import { SettingsModal } from '@/components/SettingsModal';
 import { MissingApiKeyDialog } from '@/components/MissingApiKeyDialog';
@@ -51,7 +48,7 @@ export function WorkspaceShell() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [missingApiKeyDialogOpen, setMissingApiKeyDialogOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'image-generation' | 'agent' | 'canvas' | 'assets' | 'reverse-prompt' | 'gif' | 'prompt-gallery'>('agent');
+  const [activeTab, setActiveTab] = useState<'image-generation' | 'agent' | 'reverse-prompt' | 'prompt-gallery'>('image-generation');
   const [generationHistoryFilter, setGenerationHistoryFilter] = useState<GenerationHistoryFilter>('all');
   const [generationClearScope, setGenerationClearScope] = useState<HistoryClearScope | null>(null);
   const [referenceDraft, setReferenceDraft] = useState<{ id: number; refImages: RefImageData[]; prompt?: string } | null>(null);
@@ -398,35 +395,11 @@ export function WorkspaceShell() {
                 />
               </TabsContent>
 
-              <TabsContent value="canvas" keepMounted className={cn('min-h-0', wideMode ? 'xl:flex xl:min-h-0 xl:flex-1 xl:flex-col' : 'space-y-6')}>
-                <CanvasWorkspace
-                  wideMode={wideMode}
-                  onConfigureApiKey={() => setSettingsOpen(true)}
-                  onEnableWideMode={() => { if (!wideMode) toggleWideMode(); }}
-                  showToast={showToast}
-                  showPromptGallery={promptGallery.showPromptGallery}
-                />
-              </TabsContent>
-
-              <TabsContent value="assets" keepMounted className={cn(wideMode ? 'space-y-6 xl:min-h-0 xl:min-w-0 xl:flex xl:flex-col' : 'space-y-6')}>
-                <AssetsWorkspace wideMode={wideMode} active={activeTab === 'assets'} />
-              </TabsContent>
-
               <TabsContent value="reverse-prompt" keepMounted className={cn(wideMode ? 'space-y-6 xl:min-h-0 xl:flex xl:flex-col' : 'space-y-6')}>
                 <ReversePromptForm
                   wideMode={wideMode}
                   disabled={!workspace.hasApiKey}
                   onConfigureApiKey={() => setSettingsOpen(true)}
-                />
-              </TabsContent>
-
-              <TabsContent value="gif" keepMounted className={cn(wideMode ? 'space-y-6 xl:min-h-0 xl:flex xl:flex-col' : 'space-y-6')}>
-                <GifGenerationWorkspace
-                  wideMode={wideMode}
-                  hasApiKey={workspace.hasApiKey}
-                  onConfigureApiKey={() => setSettingsOpen(true)}
-                  onError={message => showToast(message, 'error')}
-                  showToast={showToast}
                 />
               </TabsContent>
 
