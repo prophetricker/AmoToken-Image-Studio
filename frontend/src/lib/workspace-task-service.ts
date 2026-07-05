@@ -383,6 +383,11 @@ export async function submitImageToImage(
     return;
   }
 
+  if (input.files.length > 4) {
+    onError('多图融合最多支持 4 张参考图');
+    return;
+  }
+
   const refImages = input.files.map(file => ({
     id: file.id,
     name: file.name,

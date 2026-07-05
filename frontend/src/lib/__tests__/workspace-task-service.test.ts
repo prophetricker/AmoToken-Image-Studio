@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ackNovaTask, createNovaTask, resolveImageTaskProvider, type NovaTaskResponse } from '@/lib/ccode-task-client';
 import { downloadAndStoreImages } from '@/lib/image-downloader';
 import type { StoredJob } from '@/lib/job-store';
+import { AMOTOKEN_IMAGE_MODEL_ID, saveAmoTokenToken } from '@/lib/nova-models';
 import {
   finalizeCompletedServerTask,
+  submitImageToImage,
   submitTextToImage,
   type SubmitActions,
 } from '@/lib/workspace-task-service';
@@ -76,6 +78,8 @@ function createActions(initialJob: StoredJob): { actions: SubmitActions; getJob:
 }
 
 beforeEach(() => {
+  localStorage.clear();
+  saveAmoTokenToken('test-api-key');
   mockedAckNovaTask.mockReset();
   mockedAckNovaTask.mockResolvedValue(undefined);
   mockedCreateNovaTask.mockReset();
@@ -86,6 +90,7 @@ beforeEach(() => {
     apiKey: 'test-api-key',
     baseUrl: 'https://api.openai.com',
     protocol: 'openai',
+    modelId: 'gpt-image-2',
   });
 });
 
@@ -99,7 +104,7 @@ describe('submitTextToImage', () => {
       outputSize: '1K',
       aspectRatio: '1:1',
       temperature: 1,
-      model: 'gpt-image-2',
+      model: AMOTOKEN_IMAGE_MODEL_ID,
       gptImageQuality: 'high',
       gptImageStyle: 'vivid',
       gptImageBackground: 'transparent',
@@ -120,6 +125,37 @@ describe('submitTextToImage', () => {
       gptImageBackground: 'transparent',
     }));
     expect(getJob().serverTaskId).toBe('task-advanced-1');
+  });
+});
+
+describe('submitImageToImage', () => {
+  it('limits AmoToken multi-image fusion to four input images', async () => {
+    const job = makeJob({ mode: 'image-to-image' });
+    const { actions } = createActions(job);
+    const onError = vi.fn();
+
+    await submitImageToImage({
+      prompt: 'merge these references',
+      files: [
+        { id: '1', name: '1.png', dataUrl: 'data:image/png;base64,one', mimeType: 'image/png' },
+        { id: '2', name: '2.png', dataUrl: 'data:image/png;base64,two', mimeType: 'image/png' },
+        { id: '3', name: '3.png', dataUrl: 'data:image/png;base64,three', mimeType: 'image/png' },
+        { id: '4', name: '4.png', dataUrl: 'data:image/png;base64,four', mimeType: 'image/png' },
+        { id: '5', name: '5.png', dataUrl: 'data:image/png;base64,five', mimeType: 'image/png' },
+      ],
+      outputSize: '2K',
+      aspectRatio: '16:9',
+      temperature: 1,
+      model: 'amotoken-gpt-image-2',
+      gptImageQuality: 'medium',
+      gptImageStyle: 'auto',
+      gptImageBackground: 'opaque',
+      parallelCount: 1,
+    }, actions, onError);
+
+    expect(mockedCreateNovaTask).not.toHaveBeenCalled();
+    expect(actions.addJob).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith('多图融合最多支持 4 张参考图');
   });
 });
 
