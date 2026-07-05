@@ -320,7 +320,7 @@ export async function submitTextToImage(
   const apiKey = provider.apiKey;
 
   if (!apiKey) {
-    onError('请先配置 API 密钥');
+    onError('请先粘贴 AmoToken 令牌');
     return;
   }
 
@@ -379,7 +379,7 @@ export async function submitImageToImage(
   const apiKey = provider.apiKey;
 
   if (!apiKey) {
-    onError('请先配置 API 密钥');
+    onError('请先粘贴 AmoToken 令牌');
     return;
   }
 

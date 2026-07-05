@@ -70,7 +70,7 @@ export function TextToImageForm({ onSubmit, disabled = false, onDraftConsumed, o
   const [prompt, setPrompt] = useState('');
   const [queue, setQueue] = useState<QueuedPrompt[]>([]);
 
-  const disabledMessage = '请先在设置中配置 Nova API 密钥，配置完成后即可开始生成图片。';
+  const disabledMessage = '请先在设置中粘贴 AmoToken 令牌，保存后即可开始生成图片。';
 
   const [model, setModel] = useState<ModelId>('gemini-3-pro-image-preview');
   const [outputSize, setOutputSize] = useState<OutputSize>('1K');
@@ -323,7 +323,7 @@ export function TextToImageForm({ onSubmit, disabled = false, onDraftConsumed, o
               <Info className="h-5 w-5" />
             </div>
             <div className="max-w-md">
-              <p className="text-base font-medium text-foreground">API 密钥未配置</p>
+              <p className="text-base font-medium text-foreground">AmoToken 令牌未配置</p>
               <p className="mt-2 text-sm text-muted-foreground">{disabledMessage}</p>
             </div>
             <Button onClick={() => setMissingApiKeyDialogOpen(true)}>

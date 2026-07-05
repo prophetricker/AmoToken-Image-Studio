@@ -26,9 +26,9 @@ export function MissingApiKeyDialog({ open, onOpenChange, onConfigure }: Missing
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>请先配置 API 密钥</DialogTitle>
+          <DialogTitle>请先粘贴 AmoToken 令牌</DialogTitle>
           <DialogDescription>
-            Nova 模式需要先配置 API 密钥，配置完成后即可生成或转换图片。
+            AmoToken v0.5 已预置可用模型，粘贴专用令牌后即可生成或转换图片。
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

@@ -142,7 +142,7 @@ export function ImageGenerationWorkbench({
   const aspectRatioOptions = useMemo(() => getAspectRatioOptions(model, outputSize), [model, outputSize]);
   const currentMode: WorkbenchMode = pendingFiles.length > 0 ? 'image-to-image' : 'text-to-image';
   const autoLayoutLocked = outputSize === 'auto';
-  const disabledMessage = '请先在设置中配置 Nova API 密钥，配置完成后即可开始生成图片。';
+  const disabledMessage = '请先在设置中粘贴 AmoToken 令牌，保存后即可开始生成图片。';
 
   const handleParamsChange = useCallback((patch: Partial<GenerationParamsValue>) => {
     if (patch.model !== undefined) setModel(patch.model);
@@ -276,36 +276,47 @@ export function ImageGenerationWorkbench({
   useEffect(() => {
     if (!referenceDraft?.refImages.length) return;
     if (consumedDraftRef.current === referenceDraft.id) return;
+    const draft = referenceDraft;
+    let cancelled = false;
     consumedDraftRef.current = referenceDraft.id;
-    if (referenceDraft.prompt) {
-      setPrompt(referenceDraft.prompt);
-    }
-    setPendingFiles(prev => {
-      const existingIds = new Set(prev.map(file => file.id));
-      const remainingSlots = Math.max(0, maxImages - prev.length);
-      if (remainingSlots <= 0) {
-        setUploadError(`${MODEL_OPTIONS.find(o => o.value === model)?.label} 最多支持 ${maxImages} 张参考图`);
-        return prev;
+
+    queueMicrotask(() => {
+      if (cancelled) return;
+
+      if (draft.prompt) {
+        setPrompt(draft.prompt);
       }
-      const incoming: UploadedFile[] = referenceDraft.refImages
-        .filter(img => !existingIds.has(img.id))
-        .slice(0, remainingSlots)
-        .map(img => ({
-          id: img.id,
-          name: img.name,
-          preview: img.dataUrl,
-          dataUrl: img.dataUrl,
-          mimeType: img.mimeType,
-          badge: img.badge || '参考',
-        }));
-      if (incoming.length < referenceDraft.refImages.length) {
-        setUploadError(`${MODEL_OPTIONS.find(o => o.value === model)?.label} 最多支持 ${maxImages} 张参考图，已添加可容纳的图片`);
-      } else {
-        setUploadError(null);
-      }
-      return incoming.length > 0 ? [...prev, ...incoming] : prev;
+      setPendingFiles(prev => {
+        const existingIds = new Set(prev.map(file => file.id));
+        const remainingSlots = Math.max(0, maxImages - prev.length);
+        if (remainingSlots <= 0) {
+          setUploadError(`${MODEL_OPTIONS.find(o => o.value === model)?.label} 最多支持 ${maxImages} 张参考图`);
+          return prev;
+        }
+        const incoming: UploadedFile[] = draft.refImages
+          .filter(img => !existingIds.has(img.id))
+          .slice(0, remainingSlots)
+          .map(img => ({
+            id: img.id,
+            name: img.name,
+            preview: img.dataUrl,
+            dataUrl: img.dataUrl,
+            mimeType: img.mimeType,
+            badge: img.badge || '参考',
+          }));
+        if (incoming.length < draft.refImages.length) {
+          setUploadError(`${MODEL_OPTIONS.find(o => o.value === model)?.label} 最多支持 ${maxImages} 张参考图，已添加可容纳的图片`);
+        } else {
+          setUploadError(null);
+        }
+        return incoming.length > 0 ? [...prev, ...incoming] : prev;
+      });
+      onDraftConsumed?.();
     });
-    onDraftConsumed?.();
+
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- referenceDraft.id is the stable identity; refImages is consumed via ref guard
   }, [maxImages, model, onDraftConsumed, referenceDraft?.id]);
 
@@ -371,7 +382,7 @@ export function ImageGenerationWorkbench({
     } finally {
       setLoading(false);
     }
-  }, [autoLayoutLocked, detectImageAspectRatio, maxImages, model, pendingFiles.length]);
+  }, [autoLayoutLocked, detectImageAspectRatio, maxImages, model, modelLimit.description, pendingFiles.length]);
 
   const handleImportAssets = useCallback(async (selectedAssets: ImageAsset[]) => {
     if (selectedAssets.length === 0) return;
@@ -574,7 +585,7 @@ export function ImageGenerationWorkbench({
               <Info className="h-5 w-5" />
             </div>
             <div className="max-w-md">
-              <p className="text-base font-medium text-foreground">API 密钥未配置</p>
+              <p className="text-base font-medium text-foreground">AmoToken 令牌未配置</p>
               <p className="mt-2 text-sm text-muted-foreground">{disabledMessage}</p>
             </div>
             <Button onClick={() => setMissingApiKeyDialogOpen(true)}>配置</Button>

@@ -99,7 +99,7 @@ export function WorkspaceShell() {
   useServerTaskPolling(workspace.jobs, submitActions, workspace.hasJob);
 
   const handleSubmitError = useCallback((message: string) => {
-    if (message === '请先配置 API 密钥') {
+    if (message === '请先配置 API 密钥' || message === '请先粘贴 AmoToken 令牌') {
       setError(null);
       setMissingApiKeyDialogOpen(true);
       return;

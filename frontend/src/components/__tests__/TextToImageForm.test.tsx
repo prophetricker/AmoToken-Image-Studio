@@ -100,7 +100,7 @@ describe('TextToImageForm', () => {
     const onSubmit = vi.fn()
     render(<TextToImageForm onSubmit={onSubmit} disabled />)
 
-    expect(screen.getByText('API 密钥未配置')).toBeInTheDocument()
+    expect(screen.getByText('AmoToken 令牌未配置')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '配置' })).toBeInTheDocument()
   })
 })

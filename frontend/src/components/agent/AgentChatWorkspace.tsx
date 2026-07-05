@@ -787,7 +787,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
             ref={editorRef}
             images={agent.images}
             disabled={disabled}
-            placeholder={disabled ? '请先配置 API 密钥' : '描述你想要的画面，或上传图片...'}
+            placeholder={disabled ? '请先粘贴 AmoToken 令牌' : '描述你想要的画面，或上传图片...'}
             onSubmit={handleEditorSubmit}
             onInputChange={(hasContent) => setHasEditorContent(hasContent)}
           />
