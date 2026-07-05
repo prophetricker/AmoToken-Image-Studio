@@ -54,7 +54,7 @@ function getCurrentAmoToken(): string {
 }
 
 export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModalProps) {
-  const [amotokenApiKey, setAmotokenApiKey] = useState('');
+  const [amotokenApiKey, setAmotokenApiKey] = useState(() => getCurrentAmoToken());
   const [showAmoTokenApiKey, setShowAmoTokenApiKey] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -66,13 +66,32 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
 
   useEffect(() => {
     if (!isOpen) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setAmotokenApiKey(getCurrentAmoToken());
+      setShowAmoTokenApiKey(false);
+      setError(null);
+      setSuccess(null);
+      setBackupError(null);
+      setBackupSuccess(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
+
+  const handleOpenChange = (open: boolean) => {
+    if (open) return;
+    if (isBackupActive) return;
     setAmotokenApiKey(getCurrentAmoToken());
     setShowAmoTokenApiKey(false);
     setError(null);
     setSuccess(null);
     setBackupError(null);
     setBackupSuccess(null);
-  }, [isOpen]);
+    onClose();
+  };
 
   const handleSaveAmoTokenToken = () => {
     const token = amotokenApiKey.trim();
@@ -133,10 +152,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => {
-      if (!open && isBackupActive) return;
-      if (!open) onClose();
-    }}>
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <DialogContent className="flex max-h-[92vh] flex-col gap-0 overflow-hidden p-0 pt-0 sm:max-w-3xl">
         <DialogHeader className="p-4 pb-3">
           <div className="flex items-center gap-2">

@@ -3,7 +3,6 @@
 import {
   AMOTOKEN_IMAGE_MODEL_ID,
   AMOTOKEN_TEXT_MODEL_ID,
-  getPublicAmoTokenImageCapabilities,
 } from '@/lib/amotoken-image-capabilities';
 
 export {
