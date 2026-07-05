@@ -26,6 +26,16 @@ Nova Image Studio（简称 Nova Image）是一个面向个人/团队的 AI 图�
 
 > 当前版本：**v3.1.1**
 
+## AmoToken v0.5 定制说明
+
+本分支基于上游 `tianjiangqiji/nova-image-studio` commit `192d659` 定制，用于 AmoToken 生图站内测与灰度发布。主要差异：
+
+- 后端可通过 `NOVA_FORCE_BASE_URL` 强制锁定 OpenAI 兼容请求的内部 NewAPI 地址，避免普通用户配置任意 Base URL。
+- 普通用户配置简化为只粘贴 AmoToken 令牌，前端自动写入 `gpt-image-2` 生图模型与文本辅助模型预设。
+- v0.5 公开能力限定为 `gpt-image-2` 文生图、单图编辑、多图融合；实验性能力默认隐藏。
+
+本定制分支继续遵循 AGPL-3.0。通过网络提供服务时，应向用户公开对应修改源码。
+
 ## 💎 赞助商
 
 期待您的赞助
