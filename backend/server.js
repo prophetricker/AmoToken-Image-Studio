@@ -96,6 +96,17 @@ function resolveNovaApiBaseUrl() {
   return normalizeBaseUrl(getRuntimeEnv().NOVA_API_BASE_URL) || 'https://api.openai.com';
 }
 
+function resolveForcedOpenAiBaseUrl() {
+  return normalizeProtocolBaseUrl('openai', getRuntimeEnv().NOVA_FORCE_BASE_URL || '');
+}
+
+function resolveOpenAiCompatibleBaseUrl(protocol = 'openai', baseUrl = '') {
+  const forcedBaseUrl = resolveForcedOpenAiBaseUrl();
+  if (forcedBaseUrl && protocol !== 'google') return forcedBaseUrl;
+  const normalized = normalizeProtocolBaseUrl(protocol, baseUrl);
+  return normalized || (protocol === 'google' ? normalizeProtocolBaseUrl('google', baseUrl) : resolveNovaApiBaseUrl());
+}
+
 function hashPromptGalleryPassword(password) {
   return createHash('sha256')
     .update(`${PROMPT_GALLERY_PASSWORD_SALT}${String(password || '')}`)
@@ -630,7 +641,8 @@ function normalizeGptImageAdvancedParams(params = {}) {
 function validateCreatePayload(body) {
   if (!body || typeof body !== 'object') throw new Error('请求体不能为空');
   if (typeof body.apiKey !== 'string' || body.apiKey.trim().length === 0) throw new Error('缺少 API 密钥');
-  if (typeof body.baseUrl !== 'string' || body.baseUrl.trim().length === 0) throw new Error('缺少 API 基础地址');
+  const forcedBaseUrl = resolveForcedOpenAiBaseUrl();
+  if (!forcedBaseUrl && (typeof body.baseUrl !== 'string' || body.baseUrl.trim().length === 0)) throw new Error('缺少 API 基础地址');
   if (!VALID_PROTOCOLS.has(body.protocol)) throw new Error('协议类型无效，必须为 google 或 openai');
   if (body.mode !== 'text-to-image' && body.mode !== 'image-to-image') throw new Error('任务模式无效');
   if (typeof body.prompt !== 'string' || body.prompt.trim().length === 0) throw new Error('提示词不能为空');
@@ -638,13 +650,16 @@ function validateCreatePayload(body) {
   if (!Number.isInteger(body.parallelCount) || body.parallelCount < 1 || body.parallelCount > 4) throw new Error('并发数量无效');
 
   if (!Array.isArray(body.images)) body.images = [];
-  body.baseUrl = normalizeProtocolBaseUrl(body.protocol, body.baseUrl);
+  const effectiveBaseUrl = resolveOpenAiCompatibleBaseUrl(body.protocol, body.baseUrl);
+  body.baseUrl = effectiveBaseUrl;
   if (!body.baseUrl) throw new Error('缺少 API 基础地址');
   // 开源版：不做模型级参数规范化，前端负责传递正确的参数，后端无条件透传
 }
 
 function createTask(body, req) {
   validateCreatePayload(body);
+  const effectiveBaseUrl = resolveOpenAiCompatibleBaseUrl(body.protocol, body.baseUrl);
+  body.baseUrl = effectiveBaseUrl;
   const limitConfig = getLimitConfig();
   if (isRejectNewTasksEnabled()) {
     throw createHttpError(503, 'SERVER_NOT_ACCEPTING_TASKS', LIMIT_ERROR_MESSAGES.notAcceptingTasks, limitConfig.retryAfterSeconds);
@@ -658,7 +673,7 @@ function createTask(body, req) {
     mode: body.mode,
     source: 'nova',
     protocol: body.protocol,
-    baseUrl: body.baseUrl,
+    baseUrl: effectiveBaseUrl,
     prompt: body.prompt,
     outputSize: body.outputSize,
     customSize: body.customSize,
@@ -1589,12 +1604,12 @@ async function handleApi(req, res, pathname) {
       try {
         const body = await readJsonBody(req);
         const { protocol, baseUrl, apiKey, model, stream, requestBody } = body;
-        if (!baseUrl || !apiKey) {
+        if ((!baseUrl && !resolveForcedOpenAiBaseUrl()) || !apiKey) {
           sendJson(res, 400, { error: 'Missing baseUrl or apiKey' });
           return true;
         }
 
-        const normalizedBaseUrl = normalizeProtocolBaseUrl(protocol, baseUrl);
+        const normalizedBaseUrl = resolveOpenAiCompatibleBaseUrl(protocol, baseUrl);
         let targetUrl;
         const authHeaders = { 'Content-Type': 'application/json' };
 
@@ -1671,13 +1686,13 @@ async function handleApi(req, res, pathname) {
         const baseUrl = parsed.searchParams.get('baseUrl');
         const apiKey = parsed.searchParams.get('apiKey');
         const protocol = parsed.searchParams.get('protocol') || 'openai';
-        if (!baseUrl || !apiKey) {
+        if ((!baseUrl && !resolveForcedOpenAiBaseUrl()) || !apiKey) {
           sendJson(res, 400, { error: 'Missing baseUrl or apiKey' });
           return true;
         }
 
-        const normalizedBaseUrl = normalizeProtocolBaseUrl(protocol, baseUrl);
-        const modelsUrl = `${normalizedBaseUrl}/v1/models`;
+        const modelsBaseUrl = resolveOpenAiCompatibleBaseUrl(protocol, baseUrl);
+        const modelsUrl = `${modelsBaseUrl}/v1/models`;
         // 模型列表查询只发送 Authorization 头。x-goog-api-key 仅用于 Gemini 生成端点，
         // 对 /v1/models (兼容 OpenAI 格式的 NewAPI 等) 会引发错误或返回空列表。
         const headers = { Authorization: `Bearer ${apiKey}` };

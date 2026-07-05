@@ -45,3 +45,21 @@ describe('backend GPT Image advanced params forwarding', () => {
     expect(serverSource).toContain('return requestGptImage(apiKey, request, resolveGptImageRequestSize(request), { baseUrl });');
   });
 });
+
+describe('AmoToken forced base URL guard', () => {
+  it('defines NOVA_FORCE_BASE_URL support and a resolver for OpenAI-compatible requests', () => {
+    expect(serverSource).toContain('NOVA_FORCE_BASE_URL');
+    expect(serverSource).toContain('function resolveForcedOpenAiBaseUrl()');
+    expect(serverSource).toContain('function resolveOpenAiCompatibleBaseUrl');
+  });
+
+  it('stores the effective task base URL instead of trusting client baseUrl', () => {
+    expect(serverSource).toContain('const effectiveBaseUrl = resolveOpenAiCompatibleBaseUrl(body.protocol, body.baseUrl);');
+    expect(serverSource).toContain('baseUrl: effectiveBaseUrl,');
+  });
+
+  it('uses the forced OpenAI-compatible base URL for text proxy and model proxy', () => {
+    expect(serverSource).toContain('const normalizedBaseUrl = resolveOpenAiCompatibleBaseUrl(protocol, baseUrl);');
+    expect(serverSource).toContain('const modelsBaseUrl = resolveOpenAiCompatibleBaseUrl(protocol, baseUrl);');
+  });
+});
