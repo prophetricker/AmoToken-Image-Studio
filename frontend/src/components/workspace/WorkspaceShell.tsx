@@ -445,7 +445,7 @@ export function WorkspaceShell() {
       <SettingsModal
         isOpen={settingsOpen}
         onClose={() => setSettingsOpen(false)}
-        onApiKeyChange={workspace.setHasApiKey}
+        onApiKeyChange={apiKey => workspace.setHasApiKey(Boolean(apiKey.trim()))}
       />
 
       <MissingApiKeyDialog
