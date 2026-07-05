@@ -1,5 +1,17 @@
 'use client';
 
+import {
+  AMOTOKEN_IMAGE_MODEL_ID,
+  AMOTOKEN_TEXT_MODEL_ID,
+  getPublicAmoTokenImageCapabilities,
+} from '@/lib/amotoken-image-capabilities';
+
+export {
+  AMOTOKEN_IMAGE_MODEL_ID,
+  AMOTOKEN_TEXT_MODEL_ID,
+  getPublicAmoTokenImageCapabilities,
+} from '@/lib/amotoken-image-capabilities';
+
 export type ProviderProtocol = 'google' | 'openai';
 export type ImageOutputSize = '512' | '1K' | '2K' | '4K';
 export type BuiltinImagePresetId =
@@ -260,6 +272,45 @@ function getInitialRegistry(): NovaModelRegistry {
   };
 }
 
+export function buildAmoTokenRegistry(apiKey: string): NovaModelRegistry {
+  const token = apiKey.trim();
+  return {
+    imageModels: [
+      {
+        id: AMOTOKEN_IMAGE_MODEL_ID,
+        protocol: 'openai',
+        name: 'AmoToken GPT Image 2',
+        modelId: 'gpt-image-2',
+        apiKey: token,
+        baseUrl: 'https://amotoken.cc/v1',
+        builtinPreset: 'gpt-image-2',
+        maxRefImages: 4,
+        maxOutputSize: '2K',
+        supportsAdvancedParams: true,
+      },
+    ],
+    textModels: [
+      {
+        id: AMOTOKEN_TEXT_MODEL_ID,
+        protocol: 'openai',
+        name: 'AmoToken Text Helper',
+        modelId: 'gpt-5.4-mini',
+        apiKey: token,
+        baseUrl: 'https://amotoken.cc/v1',
+        note: 'AmoToken Responses helper',
+      },
+    ],
+    defaults: {
+      textToImage: AMOTOKEN_IMAGE_MODEL_ID,
+      imageToImage: AMOTOKEN_IMAGE_MODEL_ID,
+      reversePrompt: AMOTOKEN_TEXT_MODEL_ID,
+      agent: AMOTOKEN_TEXT_MODEL_ID,
+      promptOptimize: AMOTOKEN_TEXT_MODEL_ID,
+      imageDescribe: AMOTOKEN_TEXT_MODEL_ID,
+    },
+  };
+}
+
 export function loadRegistry(): NovaModelRegistry {
   if (typeof window === 'undefined') {
     return getInitialRegistry();
@@ -289,6 +340,10 @@ export function saveRegistry(registry: NovaModelRegistry): void {
   };
 
   localStorage.setItem(REGISTRY_KEY, JSON.stringify(normalized));
+}
+
+export function saveAmoTokenToken(apiKey: string): void {
+  saveRegistry(buildAmoTokenRegistry(apiKey));
 }
 
 export function getImageModelById(registry: NovaModelRegistry, id: string): ImageModelConfig | undefined {
