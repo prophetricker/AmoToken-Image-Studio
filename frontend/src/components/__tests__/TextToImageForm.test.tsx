@@ -1,6 +1,7 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { TextToImageForm } from '../TextToImageForm'
+import { AMOTOKEN_IMAGE_MODEL_ID, saveAmoTokenToken } from '@/lib/nova-models'
 
 describe('TextToImageForm', () => {
   beforeEach(() => {
@@ -56,17 +57,19 @@ describe('TextToImageForm', () => {
 
   it('shows image params control for GPT Image 2 model', async () => {
     const onSubmit = vi.fn()
-    render(<TextToImageForm onSubmit={onSubmit} initialData={{ model: 'gpt-image-2' }} />)
+    saveAmoTokenToken('sk-test-token')
+    render(<TextToImageForm onSubmit={onSubmit} initialData={{ model: AMOTOKEN_IMAGE_MODEL_ID }} />)
 
     expect(await screen.findByTitle('图像参数')).toBeInTheDocument()
   })
 
   it('submits default image params for GPT Image 2 model when left on auto', async () => {
     const onSubmit = vi.fn()
+    saveAmoTokenToken('sk-test-token')
     render(
       <TextToImageForm
         onSubmit={onSubmit}
-        initialData={{ model: 'gpt-image-2', prompt: 'Cut out the subject' }}
+        initialData={{ model: AMOTOKEN_IMAGE_MODEL_ID, prompt: 'Cut out the subject' }}
       />
     )
 
@@ -75,7 +78,7 @@ describe('TextToImageForm', () => {
     fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true })
 
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
-      model: 'gpt-image-2',
+      model: AMOTOKEN_IMAGE_MODEL_ID,
       gptImageQuality: 'auto',
       gptImageStyle: 'auto',
       gptImageBackground: 'auto',
