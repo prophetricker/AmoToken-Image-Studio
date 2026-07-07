@@ -14,6 +14,7 @@ import {
   GPT_IMAGE_STYLE_OPTIONS,
 } from '@/lib/model-capabilities';
 import { CompletedJobCard } from '@/components/workspace/results/CompletedJobCard';
+import { PromptTextDialog } from '@/components/workspace/results/PromptTextDialog';
 
 export type GenerationHistoryFilter = 'all' | 'text-to-image' | 'image-to-image';
 export type HistoryClearScope = GenerationHistoryFilter;
@@ -84,6 +85,7 @@ const WaitingJobCard = memo(function WaitingJobCard({
   onCancel: (jobId: string) => void;
   onCheckStatus: (job: StoredJob) => void;
 }) {
+  const [promptDialogOpen, setPromptDialogOpen] = useState(false);
   const parallelCount = job.parallelCount || 1;
   const statusText = job.status === 'queued' || job.status === '排队中'
     ? '排队中...'
@@ -93,15 +95,25 @@ const WaitingJobCard = memo(function WaitingJobCard({
   const elapsedSeconds = Math.max(0, Math.floor((now - Date.parse(job.created_at)) / 1000));
 
   return (
-    <div className="rounded-xl border border-border bg-card p-4">
-      <div className="flex items-center gap-3">
+    <>
+    <div data-testid="history-job-card" className="h-64 overflow-hidden rounded-xl border border-border bg-card p-4">
+      <div className="flex h-full items-start gap-3">
         <div className="relative h-14 w-14 flex-shrink-0 overflow-hidden rounded-lg bg-muted">
           <div className="absolute inset-0 flex items-center justify-center">
             <Loader2 className="w-5 h-5 animate-spin text-primary" />
           </div>
         </div>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-base text-foreground">&quot;{job.prompt}&quot;</p>
+        <div className="min-w-0 flex-1 overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setPromptDialogOpen(true)}
+            className="min-w-0 cursor-pointer border-0 bg-transparent p-0 text-left"
+            aria-label="查看完整提示词"
+          >
+            <span className="block truncate text-base text-foreground" title={job.prompt}>
+              &quot;{job.prompt}&quot;
+            </span>
+          </button>
           <p className="mt-0.5 text-xs text-muted-foreground">{statusText}</p>
           <p className="mt-0.5 text-xs text-muted-foreground">
             已用 <span className="font-mono text-foreground">{elapsedSeconds}</span> 秒 · {getModelDisplayName(job.model)}
@@ -131,6 +143,12 @@ const WaitingJobCard = memo(function WaitingJobCard({
         </Button>
       </div>
     </div>
+    <PromptTextDialog
+      open={promptDialogOpen}
+      prompt={job.prompt}
+      onOpenChange={setPromptDialogOpen}
+    />
+    </>
   );
 });
 
@@ -320,6 +338,7 @@ const FailedJobCard = memo(function FailedJobCard({
   onCheckStatus: (job: StoredJob) => void;
 }) {
   const [copiedPrompt, setCopiedPrompt] = useState(false);
+  const [promptDialogOpen, setPromptDialogOpen] = useState(false);
   const allowCheckStatus = !job.terminal && !!job.serverTaskId;
   const outputSizeLabel = job.custom_size || getOutputSizeLabel(job.output_size);
   const promptSummary = summarizeText(job.prompt, 72);
@@ -341,30 +360,38 @@ const FailedJobCard = memo(function FailedJobCard({
   };
 
   return (
-    <div className="overflow-hidden rounded-xl border border-destructive/20 bg-card p-4">
-      <div className="grid grid-cols-[3.5rem_minmax(0,1fr)] gap-3">
+    <>
+    <div data-testid="history-job-card" className="h-64 overflow-hidden rounded-xl border border-destructive/20 bg-card p-4">
+      <div className="grid h-full grid-cols-[3.5rem_minmax(0,1fr)] gap-3">
         <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-lg bg-destructive/10 text-destructive">
           <AlertTriangle className="h-5 w-5" />
         </div>
-        <div className="min-w-0 flex-1 space-y-2">
+        <div className="min-w-0 flex-1 space-y-2 overflow-hidden">
           <div className="min-w-0">
-            <p
-              data-testid="failed-job-prompt-summary"
-              className="break-words text-base text-foreground"
-              title={job.prompt}
+            <button
+              type="button"
+              onClick={() => setPromptDialogOpen(true)}
+              className="block min-w-0 max-w-full cursor-pointer border-0 bg-transparent p-0 text-left"
+              aria-label="查看完整提示词"
             >
-              &quot;{promptSummary}&quot;
-            </p>
+              <span
+                data-testid="failed-job-prompt-summary"
+                className="block truncate text-base text-foreground"
+                title={job.prompt}
+              >
+                &quot;{promptSummary}&quot;
+              </span>
+            </button>
             <p className="text-sm font-medium text-destructive">生图失败</p>
           </div>
-          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <div className="flex max-h-14 flex-wrap items-center gap-1.5 overflow-hidden text-xs">
             <span className="max-w-full break-words rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{getModeLabel(job)}</span>
             <span className="max-w-full break-words rounded-full bg-muted px-2 py-0.5 text-muted-foreground" title={getModelDisplayName(job.model)}>{getModelDisplayName(job.model)}</span>
             <span className="max-w-full break-words rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{outputSizeLabel}</span>
             <span className="max-w-full break-words rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{job.aspect_ratio}</span>
             <span className="max-w-full break-words rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{formatElapsedTime(job.elapsedMs)}</span>
           </div>
-          <details className="text-xs text-muted-foreground">
+          <details className="max-h-20 overflow-y-auto text-xs text-muted-foreground">
             <summary className="cursor-pointer select-none text-foreground">完整参数</summary>
             <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 rounded-md bg-muted/40 p-2 sm:grid-cols-3">
               <span className="break-words">模型：{getModelDisplayName(job.model)}</span>
@@ -408,6 +435,12 @@ const FailedJobCard = memo(function FailedJobCard({
         </div>
       </div>
     </div>
+    <PromptTextDialog
+      open={promptDialogOpen}
+      prompt={job.prompt}
+      onOpenChange={setPromptDialogOpen}
+    />
+    </>
   );
 });
 

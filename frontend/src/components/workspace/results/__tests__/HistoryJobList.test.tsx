@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { HistoryJobList } from '@/components/workspace/results/HistoryJobList';
 import type { StoredJob } from '@/lib/job-store';
@@ -37,6 +37,12 @@ beforeEach(() => {
     configurable: true,
     value: ResizeObserverMock,
   });
+  class MockIntersectionObserver {
+    observe = vi.fn();
+    unobserve = vi.fn();
+    disconnect = vi.fn();
+  }
+  vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
   Object.defineProperty(navigator, 'clipboard', {
     configurable: true,
     value: { writeText: vi.fn().mockResolvedValue(undefined) },
@@ -72,7 +78,7 @@ describe('HistoryJobList v0.6 task cards', () => {
     expect(screen.queryByText(/爱词元记录/)).not.toBeInTheDocument();
   });
 
-  it('keeps long failed prompts readable with full hover access', () => {
+  it('keeps long failed prompts compact with full hover access', () => {
     const longPrompt = [
       '一个极其复杂的电影级长提示词，包含大量人物、背景、动作、材质、色彩、镜头、光影、情绪和后期细节。',
       '第二行继续描述更多复杂内容，确保卡片内只显示摘要，但悬停时仍能看到完整提示词，方便用户截取复制。',
@@ -98,9 +104,83 @@ describe('HistoryJobList v0.6 task cards', () => {
     const promptSummary = screen.getByTestId('failed-job-prompt-summary');
     expect(promptSummary).toHaveAttribute('title', longPrompt);
     expect(promptSummary.textContent?.length).toBeLessThan(longPrompt.length);
-    expect(promptSummary).toHaveClass('break-words');
+    expect(promptSummary).toHaveClass('truncate');
 
     expect(screen.getByRole('button', { name: '复制完整提示词' })).toBeInTheDocument();
     expect(screen.queryByText('错误详情')).not.toBeInTheDocument();
+  });
+
+  it('uses equal height task cards for queued, failed, and completed jobs', () => {
+    const jobs = [
+      makeJob({
+        id: 'queued-job',
+        status: 'queued',
+        prompt: '排队中的任务',
+      }),
+      makeJob({
+        id: 'failed-job',
+        status: 'failed',
+        prompt: '失败的任务',
+      }),
+      makeJob({
+        id: 'completed-job',
+        status: 'completed',
+        prompt: '完成的任务',
+        imageData: 'iVBORw0KGgo=',
+        images: ['iVBORw0KGgo='],
+      }),
+    ];
+
+    render(
+      <HistoryJobList
+        active
+        title="生图任务"
+        mode="text-to-image"
+        jobs={jobs}
+        loadedImages={new Set(['completed-job'])}
+        checkingJobIds={new Set()}
+        cooldowns={new Map()}
+        onRetry={vi.fn()}
+        onClear={vi.fn()}
+        onClearAll={vi.fn()}
+        onCancel={vi.fn()}
+        onCheckStatus={vi.fn()}
+      />
+    );
+
+    const cards = screen.getAllByTestId('history-job-card');
+    expect(cards).toHaveLength(3);
+    cards.forEach(card => {
+      expect(card).toHaveClass('h-64');
+      expect(card).toHaveClass('overflow-hidden');
+    });
+  });
+
+  it('opens the full failed prompt in a selectable dialog', () => {
+    const longPrompt = '一个很长的失败提示词，需要在卡片里截断，但点击后弹出完整内容，用户可以只选中其中一小段复制。';
+
+    render(
+      <HistoryJobList
+        active
+        title="生图任务"
+        mode="text-to-image"
+        jobs={[makeJob({ prompt: longPrompt })]}
+        loadedImages={new Set()}
+        checkingJobIds={new Set()}
+        cooldowns={new Map()}
+        onRetry={vi.fn()}
+        onClear={vi.fn()}
+        onClearAll={vi.fn()}
+        onCancel={vi.fn()}
+        onCheckStatus={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '查看完整提示词' }));
+
+    expect(screen.getByRole('dialog', { name: '完整提示词' })).toBeInTheDocument();
+    const promptText = screen.getByRole('textbox', { name: '完整提示词内容' });
+    expect(promptText).toHaveValue(longPrompt);
+    expect(promptText).toHaveAttribute('readonly');
   });
 });

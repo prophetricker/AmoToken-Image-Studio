@@ -18,6 +18,7 @@ import {
 import { formatCostEstimate, getBillingStatusLabel } from '@/lib/image-cost-estimator';
 import { HistoryImagePreview } from '@/components/workspace/results/HistoryImagePreview';
 import { ConfirmDialog } from '@/components/workspace/dialogs/ConfirmDialog';
+import { PromptTextDialog } from '@/components/workspace/results/PromptTextDialog';
 import {
   copyImagePayload,
   dispatchImageActionToast,
@@ -116,6 +117,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewImages, setPreviewImages] = useState<string[]>([]);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [promptDialogOpen, setPromptDialogOpen] = useState(false);
   const [assetMenuOpen, setAssetMenuOpen] = useState(false);
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
   const [copyMenuOpen, setCopyMenuOpen] = useState(false);
@@ -283,8 +285,8 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
 
   return (
     <>
-      <div className="rounded-xl border border-border bg-card p-4">
-        <div className="flex items-center gap-3">
+      <div data-testid="history-job-card" className="relative h-64 overflow-hidden rounded-xl border border-border bg-card p-4">
+        <div className="flex h-full items-start gap-3">
           <div
             ref={lazyLoad.elementRef}
             className="group relative h-14 w-14 flex-shrink-0 overflow-hidden rounded-lg bg-muted"
@@ -338,15 +340,22 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
             </button>
           </div>
 
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 overflow-hidden">
             <div className="flex items-center gap-1.5">
-              <p
-                data-testid="completed-job-prompt-summary"
-                className="truncate text-base text-foreground"
-                title={job.prompt}
+              <button
+                type="button"
+                onClick={() => setPromptDialogOpen(true)}
+                className="min-w-0 flex-1 cursor-pointer border-0 bg-transparent p-0 text-left"
+                aria-label="查看完整提示词"
               >
-                &quot;{job.prompt}&quot;
-              </p>
+                <span
+                  data-testid="completed-job-prompt-summary"
+                  className="block truncate text-base text-foreground"
+                  title={job.prompt}
+                >
+                  &quot;{job.prompt}&quot;
+                </span>
+              </button>
               <button
                 onClick={copyPrompt}
                 className="flex-shrink-0 text-muted-foreground transition-colors hover:text-foreground"
@@ -390,7 +399,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
               {supportsTemperature && <><span>·</span><Thermometer className="w-3 h-3" /><span>{job.temperature?.toFixed(2) ?? 1}</span></>}
               {isMultiple && <><span>·</span><span className="font-medium text-primary">x{sourceImages.length}{job.parallelCount && job.parallelCount > sourceImages.length ? `/${job.parallelCount}` : ''}</span></>}
             </p>
-            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+            <div className="mt-2 flex max-h-20 flex-wrap items-center gap-1.5 overflow-hidden text-xs">
               <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{getModeLabel(job)}</span>
               <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-700 dark:text-emerald-400">已完成</span>
               <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{formatCreatedTime(job.created_at)}</span>
@@ -398,7 +407,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
               <span className="rounded-full bg-primary/10 px-2 py-0.5 text-primary">{formatCostEstimate(job.costEstimate)}</span>
               <span className="rounded-full bg-warning/10 px-2 py-0.5 text-warning">{getBillingStatusLabel(job.billingStatus)}</span>
             </div>
-            <details className="mt-2 text-xs text-muted-foreground">
+            <details className="mt-2 max-h-20 overflow-y-auto text-xs text-muted-foreground">
               <summary className="cursor-pointer select-none text-foreground">完整参数</summary>
               <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 rounded-md bg-muted/40 p-2 sm:grid-cols-3">
                 <span>模型：{getModelDisplayName(job.model)}</span>
@@ -413,7 +422,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
             </details>
           </div>
 
-          <div className="flex flex-shrink-0 items-center gap-1">
+          <div className="absolute bottom-4 right-4 flex items-center gap-1">
             {needsRedownload && onRetryDownload && (
               <Button
                 variant="ghost"
@@ -532,6 +541,12 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
         />,
         document.body
       )}
+
+      <PromptTextDialog
+        open={promptDialogOpen}
+        prompt={job.prompt}
+        onOpenChange={setPromptDialogOpen}
+      />
 
       {deleteDialogOpen && createPortal(
         <ConfirmDialog

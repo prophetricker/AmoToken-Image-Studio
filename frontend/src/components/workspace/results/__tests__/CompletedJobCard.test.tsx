@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CompletedJobCard } from '@/components/workspace/results/CompletedJobCard';
 import type { StoredJob } from '@/lib/job-store';
@@ -75,6 +75,25 @@ describe('CompletedJobCard v0.6 metadata', () => {
     );
 
     expect(screen.getByTestId('completed-job-prompt-summary')).toHaveAttribute('title', longPrompt);
+  });
+
+  it('opens the full completed prompt in a selectable dialog', () => {
+    const longPrompt = '一个很长的成功任务提示词，需要在任务卡里只显示一行，点击后弹出完整内容，并允许用户框选部分复制。';
+
+    render(
+      <CompletedJobCard
+        job={makeCompletedJob({ prompt: longPrompt })}
+        onClear={vi.fn()}
+        onRetry={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '查看完整提示词' }));
+
+    expect(screen.getByRole('dialog', { name: '完整提示词' })).toBeInTheDocument();
+    const promptText = screen.getByRole('textbox', { name: '完整提示词内容' });
+    expect(promptText).toHaveValue(longPrompt);
+    expect(promptText).toHaveAttribute('readonly');
   });
 
   it('labels persisted multi-reference image jobs as fusion', () => {

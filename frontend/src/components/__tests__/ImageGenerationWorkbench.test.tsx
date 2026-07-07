@@ -91,6 +91,8 @@ describe('ImageGenerationWorkbench AmoToken setup', () => {
 
     expect(await screen.findByText('生图建议')).toBeInTheDocument();
     expect(screen.getByText(/复杂画面、角色过多/)).toBeInTheDocument();
+    expect(screen.getByText(/知名角色、品牌、影视动漫作品名/)).toBeInTheDocument();
+    expect(screen.getByText(/生图服务繁忙、网络波动或连接中断/)).toBeInTheDocument();
     expect(screen.getByText(/失败通常不扣费/)).toBeInTheDocument();
   });
 });
