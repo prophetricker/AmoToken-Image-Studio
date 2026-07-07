@@ -12,7 +12,7 @@ import {
 } from '@/lib/job-store';
 import type { ModelId } from '@/lib/gemini-config';
 import { getCompatibleRetryData, type RetryData } from '@/lib/model-capabilities';
-import { classifyFailureFromMessage } from '@/lib/task-failure';
+import { classifyFailureFromMessage, getTaskFailureDisplayInfo } from '@/lib/task-failure';
 import { deleteStoredBlobs, revokeBlobUrls } from '@/lib/image-downloader';
 import { retryDownloadCachedImages } from '@/lib/workspace-task-service';
 
@@ -29,8 +29,8 @@ function loadInitialJobs(): StoredJob[] {
 }
 
 export function useWorkspaceJobs() {
-  const [hasApiKey, setHasApiKey] = useState(() => hasAnyApiKey());
-  const [jobs, setJobs] = useState<StoredJob[]>(loadInitialJobs);
+  const [hasApiKey, setHasApiKey] = useState(false);
+  const [jobs, setJobs] = useState<StoredJob[]>([]);
   const jobsRef = useRef(jobs);
   useEffect(() => { jobsRef.current = jobs; }, [jobs]);
   const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set());
@@ -39,40 +39,53 @@ export function useWorkspaceJobs() {
   const [cancelJobId, setCancelJobId] = useState<string | null>(null);
 
   useEffect(() => {
-    const stored = loadInitialJobs();
-    saveJobs(stored);
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      setHasApiKey(hasAnyApiKey());
+      const stored = loadInitialJobs();
+      setJobs(stored);
+      jobsRef.current = stored;
+      saveJobs(stored);
 
-    if (stored.length > 0) {
-      openDB()
-        .then(db => {
-          if (!db) return;
-          const request = db.transaction(IMG_STORE, 'readonly').objectStore(IMG_STORE).getAll();
-          request.onsuccess = () => {
-            const imageMap = new Map<string, StoredJob>();
-            for (const image of request.result as StoredJob[]) {
-              imageMap.set(image.id, image);
-            }
+      if (stored.length > 0) {
+        openDB()
+          .then(db => {
+            if (!db || cancelled) return;
+            const request = db.transaction(IMG_STORE, 'readonly').objectStore(IMG_STORE).getAll();
+            request.onsuccess = () => {
+              if (cancelled) return;
+              const imageMap = new Map<string, StoredJob>();
+              for (const image of request.result as StoredJob[]) {
+                imageMap.set(image.id, image);
+              }
 
-            setJobs(prev => prev.map(job => {
-              const image = imageMap.get(job.id);
-              if (!image) return job;
+              setJobs(prev => prev.map(job => {
+                const image = imageMap.get(job.id);
+                if (!image) return job;
 
-              const persistedImages = image.images || (image.imageData ? [image.imageData] : []);
-              if (persistedImages.length === 0) return job;
+                const persistedImages = image.images || (image.imageData ? [image.imageData] : []);
+                if (persistedImages.length === 0) return job;
 
-              return {
-                ...job,
-                images: persistedImages,
-                imageData: persistedImages[0],
-                refImages: image.refImages,
-                error: image.error,
-              };
-            }));
-            setLoadedImages(new Set(imageMap.keys()));
-          };
-        })
-        .catch(() => undefined);
-    }
+                return {
+                  ...job,
+                  images: persistedImages,
+                  imageData: persistedImages[0],
+                  refImages: image.refImages,
+                  error: image.error,
+                };
+              }));
+              setLoadedImages(new Set(imageMap.keys()));
+            };
+          })
+          .catch(() => undefined);
+      }
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, []);
 
   const persistJobs = useCallback((updater: (prev: StoredJob[]) => StoredJob[]) => {
@@ -110,18 +123,28 @@ export function useWorkspaceJobs() {
     await saveImage(job).catch(() => undefined);
   }, [persistJobs]);
 
-  const failJob = useCallback(async (jobId: string, error: string, options?: { terminal?: boolean }) => {
+  const failJob = useCallback(async (jobId: string, error: string, options?: { terminal?: boolean; patch?: Partial<StoredJob> }) => {
     let failedJob: StoredJob | null = null;
     persistJobs(prev => prev.map(job => {
       if (job.id !== jobId) return job;
       const classification = classifyFailureFromMessage(error);
+      const display = getTaskFailureDisplayInfo(error);
       const terminal = options?.terminal ?? classification.terminal;
+      const completedAt = new Date().toISOString();
+      const startedAt = Date.parse(job.startedAt || job.created_at);
+      const completedTime = Date.parse(completedAt);
       failedJob = {
         ...job,
+        ...options?.patch,
         status: 'failed',
         error,
         networkError: classification.reason === 'network',
         terminal,
+        completedAt: options?.patch?.completedAt || completedAt,
+        elapsedMs: options?.patch?.elapsedMs ?? (Number.isFinite(startedAt) ? Math.max(0, completedTime - startedAt) : undefined),
+        failureReason: options?.patch?.failureReason || classification.reason,
+        failureStage: options?.patch?.failureStage || display.stage,
+        billingStatus: options?.patch?.billingStatus || 'pending-newapi-check',
       };
       return failedJob;
     }));

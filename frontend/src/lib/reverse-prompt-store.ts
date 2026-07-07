@@ -4,7 +4,7 @@
 // 保存文字结果和当前输入图草稿。
 
 export interface StoredReverseResult {
-  slot: 'current' | 'previous';
+  slot: 'current' | 'previous' | `history:${number}`;
   text: string;
   model: string;
   mode: string;
@@ -28,6 +28,33 @@ export interface StoredReverseDraft {
 const DB_NAME = 'nova-reverse-db';
 const DB_VERSION = 1;
 const STORE_NAME = 'reverse-results';
+const MAX_REVERSE_HISTORY = 8;
+
+export function createReverseHistoryEntry(result: Omit<StoredReverseResult, 'slot'>): StoredReverseResult {
+  return {
+    ...result,
+    slot: `history:${result.timestamp}`,
+  };
+}
+
+export function mergeReverseHistory(
+  history: StoredReverseResult[],
+  next: StoredReverseResult,
+  limit: number = MAX_REVERSE_HISTORY,
+): StoredReverseResult[] {
+  const bySlot = new Map<string, StoredReverseResult>();
+  for (const item of history) {
+    if (String(item.slot).startsWith('history:') && item.text.trim()) {
+      bySlot.set(item.slot, item);
+    }
+  }
+  if (String(next.slot).startsWith('history:') && next.text.trim()) {
+    bySlot.set(next.slot, next);
+  }
+  return [...bySlot.values()]
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, limit);
+}
 
 function openReverseDB(): Promise<IDBDatabase | null> {
   if (typeof indexedDB === 'undefined') return Promise.resolve(null);
@@ -49,10 +76,11 @@ function openReverseDB(): Promise<IDBDatabase | null> {
 export async function loadReverseResults(): Promise<{
   current: StoredReverseResult | null;
   previous: StoredReverseResult | null;
+  history: StoredReverseResult[];
   draft: StoredReverseDraft | null;
 }> {
   const db = await openReverseDB();
-  if (!db) return { current: null, previous: null, draft: null };
+  if (!db) return { current: null, previous: null, history: [], draft: null };
 
   return new Promise((resolve) => {
     const tx = db.transaction(STORE_NAME, 'readonly');
@@ -60,6 +88,7 @@ export async function loadReverseResults(): Promise<{
 
     let current: StoredReverseResult | null = null;
     let previous: StoredReverseResult | null = null;
+    let history: StoredReverseResult[] = [];
     let draft: StoredReverseDraft | null = null;
 
     const getReq = store.get('current');
@@ -77,8 +106,16 @@ export async function loadReverseResults(): Promise<{
       draft = (getReq3.result as StoredReverseDraft) ?? null;
     };
 
-    tx.oncomplete = () => resolve({ current, previous, draft });
-    tx.onerror = () => resolve({ current: null, previous: null, draft: null });
+    const getAllReq = store.getAll();
+    getAllReq.onsuccess = () => {
+      history = (getAllReq.result as StoredReverseResult[])
+        .filter(item => typeof item?.slot === 'string' && item.slot.startsWith('history:'))
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .slice(0, MAX_REVERSE_HISTORY);
+    };
+
+    tx.oncomplete = () => resolve({ current, previous, history, draft });
+    tx.onerror = () => resolve({ current: null, previous: null, history: [], draft: null });
   });
 }
 
@@ -93,6 +130,11 @@ export async function saveReverseResult(result: StoredReverseResult): Promise<vo
     tx.oncomplete = () => resolve();
     tx.onerror = () => resolve();
   });
+}
+
+export async function saveReverseHistoryEntry(result: Omit<StoredReverseResult, 'slot'>): Promise<void> {
+  const entry = createReverseHistoryEntry(result);
+  await saveReverseResult(entry);
 }
 
 /** 清除指定槽位 */

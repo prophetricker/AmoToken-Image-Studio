@@ -34,12 +34,16 @@ import {
   type ReversePromptMode,
   type ReversePromptModelId,
 } from '@/lib/reverse-prompt-config';
-import { getConfiguredTextModel } from '@/lib/model-endpoints';
+import { getConfiguredTextModel, getDefaultConfiguredTextModel } from '@/lib/model-endpoints';
 import {
   clearReverseDraft,
+  createReverseHistoryEntry,
   loadReverseResults,
+  mergeReverseHistory,
   saveReverseDraft,
+  saveReverseHistoryEntry,
   saveReverseResult,
+  type StoredReverseResult,
 } from '@/lib/reverse-prompt-store';
 
 import { MAX_UPLOAD_SIZE_BYTES } from '@/lib/constants';
@@ -69,6 +73,16 @@ interface ReverseResult {
   aborted?: boolean;
 }
 
+function toReverseResult(stored: StoredReverseResult): ReverseResult {
+  return {
+    text: stored.text,
+    model: stored.model as ReversePromptModelId,
+    mode: stored.mode as ReversePromptMode,
+    finished: true,
+    aborted: stored.aborted,
+  };
+}
+
 function getOptimizationBadge(originalSize: number, processedSize: number, cacheHit: boolean): string | undefined {
   if (cacheHit) return '缓存';
   if (originalSize <= 0 || processedSize >= originalSize) return undefined;
@@ -80,9 +94,10 @@ interface ReversePromptFormProps {
   wideMode?: boolean;
   disabled?: boolean;
   onConfigureApiKey?: () => void;
+  onUsePrompt?: (prompt: string) => void;
 }
 
-export function ReversePromptForm({ wideMode = false, disabled = false, onConfigureApiKey }: ReversePromptFormProps) {
+export function ReversePromptForm({ wideMode = false, disabled = false, onConfigureApiKey, onUsePrompt }: ReversePromptFormProps) {
   const [model, setModel] = useState<ReversePromptModelId>(getDefaultReversePromptModelId());
   const [mode, setMode] = useState<ReversePromptMode>(DEFAULT_REVERSE_MODE);
   const [settingsReady, setSettingsReady] = useState(false);
@@ -95,9 +110,10 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
   const [streaming, setStreaming] = useState(false);
   const [currentResult, setCurrentResult] = useState<ReverseResult | null>(null);
   const [previousResult, setPreviousResult] = useState<ReverseResult | null>(null);
+  const [historyResults, setHistoryResults] = useState<StoredReverseResult[]>([]);
   const [previousExpanded, setPreviousExpanded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [copyState, setCopyState] = useState<'current' | 'previous' | null>(null);
+  const [copyState, setCopyState] = useState<string | null>(null);
 
   const [missingApiKeyDialogOpen, setMissingApiKeyDialogOpen] = useState(false);
   const [modelPopoverOpen, setModelPopoverOpen] = useState(false);
@@ -145,6 +161,7 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
           aborted: stored.previous.aborted,
         });
       }
+      setHistoryResults(stored.history || []);
       if (stored.draft?.file) {
         setPendingFile(stored.draft.file);
       }
@@ -258,27 +275,36 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
 
   const handleSubmit = () => {
     if (!pendingFile || streaming || disabled) return;
-    const configuredModel = getConfiguredTextModel(model);
+    const configuredModel = getConfiguredTextModel(model) || getDefaultConfiguredTextModel('reversePrompt');
     if (!configuredModel?.apiKey || !configuredModel.baseUrl || !configuredModel.modelId) {
       setMissingApiKeyDialogOpen(true);
       return;
+    }
+    const activeModelId = configuredModel.id;
+    if (activeModelId !== model) {
+      setModel(activeModelId);
     }
 
     // 把上一次结果挪到「上次结果」槽
     if (currentResult && currentResult.text.length > 0) {
       setPreviousResult(currentResult);
       setPreviousExpanded(false);
-      // 持久化上次结果
-      void saveReverseResult({
-        slot: 'previous',
+      const previousForStore = {
         text: currentResult.text,
         model: currentResult.model,
         mode: currentResult.mode,
         aborted: currentResult.aborted,
         timestamp: Date.now(),
+      };
+      // 持久化上次结果
+      void saveReverseResult({
+        slot: 'previous',
+        ...previousForStore,
       });
+      void saveReverseHistoryEntry(previousForStore);
+      setHistoryResults(history => mergeReverseHistory(history, createReverseHistoryEntry(previousForStore)));
     }
-    setCurrentResult({ text: '', model, mode, finished: false });
+    setCurrentResult({ text: '', model: activeModelId, mode, finished: false });
     setError(null);
     setStreaming(true);
 
@@ -288,7 +314,7 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
     const handle = streamReversePrompt(
       {
         apiKey: configuredModel.apiKey,
-        model: configuredModel.id,
+        model: activeModelId,
         mode,
         imageDataUrl: pendingFile.dataUrl,
         mimeType: pendingFile.mimeType,
@@ -298,6 +324,7 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
           setCurrentResult(prev => prev ? { ...prev, text: prev.text + token } : prev);
         },
         onDone: (fullText) => {
+          const finalText = fullText.length > 0 ? fullText : currentResult?.text || '';
           setCurrentResult(prev => prev ? {
             ...prev,
             text: fullText.length > prev.text.length ? fullText : prev.text,
@@ -306,14 +333,18 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
           setStreaming(false);
           streamHandleRef.current = null;
           // 持久化当前结果
-          if (fullText.length > 0) {
-            void saveReverseResult({
-              slot: 'current',
-              text: fullText,
-              model,
+          if (finalText.length > 0) {
+            const timestamp = Date.now();
+            const resultForStore = {
+              text: finalText,
+              model: activeModelId,
               mode,
               aborted: false,
-              timestamp: Date.now(),
+              timestamp,
+            };
+            void saveReverseResult({
+              slot: 'current',
+              ...resultForStore,
             });
           }
         },
@@ -321,14 +352,18 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
           setError(err.message || '反推失败，请稍后重试');
           setCurrentResult(prev => {
             if (prev && prev.text.length > 0) {
+              const timestamp = Date.now();
+              const resultForStore = {
+                text: prev.text,
+                model: prev.model || activeModelId,
+                mode,
+                aborted: false,
+                timestamp,
+              };
               // 失败时如果有内容也持久化
               void saveReverseResult({
                 slot: 'current',
-                text: prev.text,
-                model,
-                mode,
-                aborted: false,
-                timestamp: Date.now(),
+                ...resultForStore,
               });
             }
             return prev ? { ...prev, finished: true } : prev;
@@ -348,14 +383,18 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
     setStreaming(false);
     setCurrentResult(prev => {
       if (prev && prev.text.length > 0) {
-        // 停止时如果有内容也持久化
-        void saveReverseResult({
-          slot: 'current',
+        const timestamp = Date.now();
+        const resultForStore = {
           text: prev.text,
           model: prev.model,
           mode: prev.mode,
           aborted: true,
-          timestamp: Date.now(),
+          timestamp,
+        };
+        // 停止时如果有内容也持久化
+        void saveReverseResult({
+          slot: 'current',
+          ...resultForStore,
         });
       }
       return prev ? { ...prev, finished: true, aborted: true } : prev;
@@ -368,6 +407,17 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
       await navigator.clipboard.writeText(text);
       setCopyState(slot);
       setTimeout(() => setCopyState(prev => (prev === slot ? null : prev)), 1500);
+    } catch {
+      setError('复制失败，请手动选择文字复制');
+    }
+  };
+
+  const handleCopyHistory = async (result: StoredReverseResult) => {
+    if (!result.text) return;
+    try {
+      await navigator.clipboard.writeText(result.text);
+      setCopyState(result.slot);
+      setTimeout(() => setCopyState(prev => (prev === result.slot ? null : prev)), 1500);
     } catch {
       setError('复制失败，请手动选择文字复制');
     }
@@ -458,35 +508,45 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
             {/* 控件栏 */}
             <div className="flex flex-wrap items-center gap-1.5 px-4 pb-3 pt-1">
               {/* 模型选择 */}
-              <Popover open={modelPopoverOpen} onOpenChange={setModelPopoverOpen}>
-                <PopoverTrigger
-                  className={cn(buttonVariants({ variant: 'outline', size: 'xs' }), 'gap-1')}
-                  title="模型选择"
+              {reverseModelOptions.length <= 1 ? (
+                <span
+                  className={cn(buttonVariants({ variant: 'outline', size: 'xs' }), 'cursor-default gap-1')}
+                  title="反推模型已随 AmoToken 令牌自动配置"
                 >
                   <Sparkles className="h-3 w-3" />
-                  <span className="shrink-0 truncate text-[11px]">{modelLabel}</span>
-                </PopoverTrigger>
-                <PopoverContent className="w-48 p-1" align="start">
-                  {reverseModelOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      onClick={() => {
-                        setModel(option.value);
-                        setTimeout(() => setModelPopoverOpen(false), 0);
-                      }}
-                      className={cn(
-                        'w-full text-left px-2.5 py-1.5 rounded-md text-sm hover:bg-muted',
-                        model === option.value && 'bg-muted font-medium'
-                      )}
-                    >
-                      <div>{option.label}</div>
-                      <div className={cn('text-[11px] mt-0.5', model === option.value ? 'opacity-90' : 'opacity-70')}>
-                        {option.description}
-                      </div>
-                    </button>
-                  ))}
-                </PopoverContent>
-              </Popover>
+                  <span className="shrink-0 truncate text-[11px]">{modelLabel || '自动反推模型'}</span>
+                </span>
+              ) : (
+                <Popover open={modelPopoverOpen} onOpenChange={setModelPopoverOpen}>
+                  <PopoverTrigger
+                    className={cn(buttonVariants({ variant: 'outline', size: 'xs' }), 'gap-1')}
+                    title="模型选择"
+                  >
+                    <Sparkles className="h-3 w-3" />
+                    <span className="shrink-0 truncate text-[11px]">{modelLabel}</span>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-48 p-1" align="start">
+                    {reverseModelOptions.map((option) => (
+                      <button
+                        key={option.value}
+                        onClick={() => {
+                          setModel(option.value);
+                          setTimeout(() => setModelPopoverOpen(false), 0);
+                        }}
+                        className={cn(
+                          'w-full text-left px-2.5 py-1.5 rounded-md text-sm hover:bg-muted',
+                          model === option.value && 'bg-muted font-medium'
+                        )}
+                      >
+                        <div>{option.label}</div>
+                        <div className={cn('text-[11px] mt-0.5', model === option.value ? 'opacity-90' : 'opacity-70')}>
+                          {option.description}
+                        </div>
+                      </button>
+                    ))}
+                  </PopoverContent>
+                </Popover>
+              )}
 
               {/* 模式选择 */}
               <Popover open={modePopoverOpen} onOpenChange={setModePopoverOpen}>
@@ -579,6 +639,7 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
           streaming={streaming}
           copied={copyState === 'current'}
           onCopy={() => handleCopy(currentResult.text, 'current')}
+          onUsePrompt={onUsePrompt ? () => onUsePrompt(currentResult.text) : undefined}
           onAbort={streaming ? handleAbort : undefined}
         />
       )}
@@ -608,9 +669,33 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
                 inline
                 copied={copyState === 'previous'}
                 onCopy={() => handleCopy(previousResult.text, 'previous')}
+                onUsePrompt={onUsePrompt ? () => onUsePrompt(previousResult.text) : undefined}
               />
             </div>
           )}
+        </div>
+      )}
+
+      {historyResults.length > 0 && (
+        <div className="rounded-xl border border-border bg-card/60 p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h3 className="text-sm font-medium text-foreground">历史记录</h3>
+            <span className="text-xs text-muted-foreground">{historyResults.length} 条</span>
+          </div>
+          <div className="space-y-3">
+            {historyResults.map((item, index) => (
+              <ResultPanel
+                key={item.slot}
+                title={`历史记录 ${index + 1}`}
+                result={toReverseResult(item)}
+                streaming={false}
+                inline
+                copied={copyState === item.slot}
+                onCopy={() => void handleCopyHistory(item)}
+                onUsePrompt={onUsePrompt ? () => onUsePrompt(item.text) : undefined}
+              />
+            ))}
+          </div>
         </div>
       )}
       </div>
@@ -631,10 +716,11 @@ interface ResultPanelProps {
   copied: boolean;
   inline?: boolean;
   onCopy: () => void;
+  onUsePrompt?: () => void;
   onAbort?: () => void;
 }
 
-function ResultPanel({ title, result, streaming, copied, inline, onCopy, onAbort }: ResultPanelProps) {
+function ResultPanel({ title, result, streaming, copied, inline, onCopy, onUsePrompt, onAbort }: ResultPanelProps) {
   const modelLabel = getReverseModelOption(result.model).label;
   const modeLabel = getReverseModeOption(result.mode).label;
   const isEmpty = result.text.length === 0;
@@ -675,6 +761,19 @@ function ResultPanel({ title, result, streaming, copied, inline, onCopy, onAbort
             {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
             <span>{copied ? '已复制' : '复制'}</span>
           </Button>
+          {onUsePrompt && (
+            <Button
+              variant="outline"
+              size="xs"
+              className="gap-1"
+              onClick={onUsePrompt}
+              disabled={isEmpty}
+              title="用于生图"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>用于生图</span>
+            </Button>
+          )}
         </div>
       </div>
 

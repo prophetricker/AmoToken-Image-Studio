@@ -1,6 +1,8 @@
 import type { GptImageBackground, GptImageQuality, GptImageStyle } from '@/lib/model-capabilities';
 import { makeStoredBlobRef, type ImageDownloadProgressItem } from '@/lib/image-downloader';
 import { openImageDb, IMG_STORE } from '@/lib/image-db';
+import type { BillingStatus, CostEstimate } from '@/lib/image-cost-estimator';
+import type { FailureReason } from '@/lib/task-failure';
 
 export type Mode = 'text-to-image' | 'image-to-image' | 'prompt-gallery';
 export type OutputSize = 'auto' | '512' | '1K' | '2K' | '4K';
@@ -35,8 +37,15 @@ export interface StoredJob {
   gptImageStyle?: GptImageStyle;
   gptImageBackground?: GptImageBackground;
   created_at: string;
+  startedAt?: string;
+  completedAt?: string;
+  elapsedMs?: number;
+  costEstimate?: CostEstimate;
+  billingStatus?: BillingStatus;
   error?: string;
   networkError?: boolean;
+  failureReason?: FailureReason;
+  failureStage?: string;
   /** true 表示后端明确判定该失败任务不可恢复（API 错误 / 服务器重启 / 已过期 / 已删除）。
    * 仅在 status==='failed' 时有意义；undefined 视为非终态，允许"查看进度" */
   terminal?: boolean;
@@ -47,6 +56,7 @@ export interface StoredJob {
   serverTaskId?: string;
   serverTaskAcked?: boolean;
   refImages?: RefImageData[];
+  referenceImageCount?: number;
   originalPrompt?: string;
   blobUrls?: string[];
   imageDownloadProgress?: ImageDownloadProgress;

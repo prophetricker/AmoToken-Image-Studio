@@ -8,7 +8,14 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { useImageLazyLoad } from '@/hooks/useImageLazyLoad';
 import { getImageSrc, type StoredJob } from '@/lib/job-store';
 import { resolveStoredImageRef, revokeBlobUrls } from '@/lib/image-downloader';
-import { getModelDisplayName, getOutputSizeLabel } from '@/lib/model-capabilities';
+import {
+  getModelDisplayName,
+  getOutputSizeLabel,
+  GPT_IMAGE_BACKGROUND_OPTIONS,
+  GPT_IMAGE_QUALITY_OPTIONS,
+  GPT_IMAGE_STYLE_OPTIONS,
+} from '@/lib/model-capabilities';
+import { formatCostEstimate, getBillingStatusLabel } from '@/lib/image-cost-estimator';
 import { HistoryImagePreview } from '@/components/workspace/results/HistoryImagePreview';
 import { ConfirmDialog } from '@/components/workspace/dialogs/ConfirmDialog';
 import {
@@ -67,6 +74,40 @@ function getDownloadProgressSummary(progress: StoredJob['imageDownloadProgress']
     message,
     percent,
   };
+}
+
+function formatElapsedTime(elapsedMs?: number): string {
+  if (!Number.isFinite(elapsedMs) || !elapsedMs) return '耗时待记录';
+  const seconds = Math.max(1, Math.round(elapsedMs / 1000));
+  if (seconds < 60) return `耗时 ${seconds} 秒`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest > 0 ? `耗时 ${minutes} 分 ${rest} 秒` : `耗时 ${minutes} 分`;
+}
+
+function formatCreatedTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '时间未知';
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function getReferenceImageCount(job: StoredJob): number {
+  return Math.max(0, job.referenceImageCount || job.refImages?.length || 0);
+}
+
+function getModeLabel(job: StoredJob): string {
+  if (job.mode === 'image-to-image') return getReferenceImageCount(job) > 1 ? '多图融合' : '单图编辑';
+  if (job.mode === 'prompt-gallery') return '提示词广场';
+  return '文生图';
+}
+
+function getOptionLabel<T extends string>(options: { value: T; label: string }[], value?: T): string {
+  return options.find(option => option.value === value)?.label || value || '自动';
 }
 
 export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, onRetry, onRetryDownload }: CompletedJobCardProps) {
@@ -159,6 +200,10 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
   const isMultiple = sourceImages.length > 1;
   const supportsTemperature = !job.model.startsWith('gpt-image-2');
   const outputSizeLabel = job.custom_size || getOutputSizeLabel(job.output_size);
+  const qualityLabel = getOptionLabel(GPT_IMAGE_QUALITY_OPTIONS, job.gptImageQuality);
+  const styleLabel = getOptionLabel(GPT_IMAGE_STYLE_OPTIONS, job.gptImageStyle);
+  const backgroundLabel = getOptionLabel(GPT_IMAGE_BACKGROUND_OPTIONS, job.gptImageBackground);
+  const referenceImageCount = getReferenceImageCount(job);
   const lazyLoad = useImageLazyLoad<HTMLDivElement>({
     rootMargin: '300px',
     enabled: true,
@@ -295,11 +340,18 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
 
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <p className="truncate text-base text-foreground">&quot;{job.prompt}&quot;</p>
+              <p
+                data-testid="completed-job-prompt-summary"
+                className="truncate text-base text-foreground"
+                title={job.prompt}
+              >
+                &quot;{job.prompt}&quot;
+              </p>
               <button
                 onClick={copyPrompt}
                 className="flex-shrink-0 text-muted-foreground transition-colors hover:text-foreground"
                 title="复制提示词"
+                aria-label="复制提示词"
               >
                 {promptCopied ? <Check className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}
               </button>
@@ -338,6 +390,27 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
               {supportsTemperature && <><span>·</span><Thermometer className="w-3 h-3" /><span>{job.temperature?.toFixed(2) ?? 1}</span></>}
               {isMultiple && <><span>·</span><span className="font-medium text-primary">x{sourceImages.length}{job.parallelCount && job.parallelCount > sourceImages.length ? `/${job.parallelCount}` : ''}</span></>}
             </p>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+              <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{getModeLabel(job)}</span>
+              <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-700 dark:text-emerald-400">已完成</span>
+              <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{formatCreatedTime(job.created_at)}</span>
+              <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{formatElapsedTime(job.elapsedMs)}</span>
+              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-primary">{formatCostEstimate(job.costEstimate)}</span>
+              <span className="rounded-full bg-warning/10 px-2 py-0.5 text-warning">{getBillingStatusLabel(job.billingStatus)}</span>
+            </div>
+            <details className="mt-2 text-xs text-muted-foreground">
+              <summary className="cursor-pointer select-none text-foreground">完整参数</summary>
+              <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 rounded-md bg-muted/40 p-2 sm:grid-cols-3">
+                <span>模型：{getModelDisplayName(job.model)}</span>
+                <span>尺寸：{outputSizeLabel}</span>
+                <span>比例：{job.aspect_ratio}</span>
+                <span>质量：{qualityLabel}</span>
+                <span>风格：{styleLabel}</span>
+                <span>背景：{backgroundLabel}</span>
+                {job.mode === 'image-to-image' && <span>参考图：{referenceImageCount || 1}</span>}
+                <span>数量：{job.parallelCount || sourceImages.length || 1}</span>
+              </div>
+            </details>
           </div>
 
           <div className="flex flex-shrink-0 items-center gap-1">
@@ -348,6 +421,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
                 onClick={() => void handleRetryDownload()}
                 disabled={retryingDownload || isDownloadingImages}
                 title={isDownloadingImages ? '正在取回图片' : '重新下载到本地缓存'}
+                aria-label={isDownloadingImages ? '正在取回图片' : '重新下载到本地缓存'}
                 className="text-warning hover:text-warning/80"
               >
                 <RefreshCw className={`w-4 h-4 ${retryingDownload || isDownloadingImages ? 'animate-spin' : ''}`} />
@@ -356,7 +430,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
 
             {isMultiple ? (
               <DropdownMenu open={assetMenuOpen} onOpenChange={setAssetMenuOpen}>
-                <DropdownMenuTrigger className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })} title="添加到素材库">
+                <DropdownMenuTrigger className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })} title="添加到素材库" aria-label="添加到素材库">
                   <ImagePlus className="w-4 h-4" />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
@@ -380,6 +454,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
                 size="icon-sm"
                 onClick={() => addImageToAssets(0)}
                 title="添加到素材库"
+                aria-label="添加到素材库"
               >
                 <ImagePlus className="w-4 h-4" />
               </Button>
@@ -387,7 +462,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
 
             {isMultiple ? (
               <DropdownMenu open={downloadMenuOpen} onOpenChange={setDownloadMenuOpen}>
-                <DropdownMenuTrigger className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })} title="下载">
+                <DropdownMenuTrigger className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })} title="下载" aria-label="下载">
                   <Download className="w-4 h-4" />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
@@ -406,14 +481,14 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
-              <Button variant="ghost" size="icon-sm" onClick={() => downloadImage(0)} title="下载">
+              <Button variant="ghost" size="icon-sm" onClick={() => downloadImage(0)} title="下载" aria-label="下载">
                 <Download className="w-4 h-4" />
               </Button>
             )}
 
             {isMultiple ? (
               <DropdownMenu open={copyMenuOpen} onOpenChange={setCopyMenuOpen}>
-                <DropdownMenuTrigger className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })} title="复制图片">
+                <DropdownMenuTrigger className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })} title="复制图片" aria-label="复制图片">
                   {imgCopied ? <Check className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
@@ -425,7 +500,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
-              <Button variant="ghost" size="icon-sm" onClick={() => copyImage(0)} title="复制图片">
+              <Button variant="ghost" size="icon-sm" onClick={() => copyImage(0)} title="复制图片" aria-label="复制图片">
                 {imgCopied ? <Check className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
               </Button>
             )}
@@ -435,12 +510,13 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
               size="icon-sm"
               onClick={() => onRetry(job)}
               title="重试"
+              aria-label="重试"
               className="text-muted-foreground hover:text-primary"
             >
               <RotateCcw className="w-4 h-4" />
             </Button>
 
-            <Button variant="ghost" size="icon-sm" onClick={() => setDeleteDialogOpen(true)} title="移除">
+            <Button variant="ghost" size="icon-sm" onClick={() => setDeleteDialogOpen(true)} title="移除" aria-label="移除">
               <X className="w-4 h-4" />
             </Button>
           </div>

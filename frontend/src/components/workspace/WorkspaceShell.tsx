@@ -52,6 +52,7 @@ export function WorkspaceShell() {
   const [generationHistoryFilter, setGenerationHistoryFilter] = useState<GenerationHistoryFilter>('all');
   const [generationClearScope, setGenerationClearScope] = useState<HistoryClearScope | null>(null);
   const [referenceDraft, setReferenceDraft] = useState<{ id: number; refImages: RefImageData[]; prompt?: string } | null>(null);
+  const [reversePromptDraft, setReversePromptDraft] = useState<{ id: number; prompt: string } | null>(null);
   const workspace = useWorkspaceJobs();
   const galleryConfig = usePromptGalleryConfig();
   const promptGallery = usePromptGalleryAccess(galleryConfig.mode, galleryConfig.passwordEnabled, setError, () => setActiveTab('prompt-gallery'));
@@ -61,6 +62,7 @@ export function WorkspaceShell() {
   const toastIdRef = useRef(0);
   const headerRef = useRef<WorkspaceHeaderRef>(null);
   const referenceDraftIdRef = useRef(0);
+  const reversePromptDraftIdRef = useRef(0);
 
   const showToast = useCallback((message: string, type: ToastData['type']) => {
     const id = `toast-${++toastIdRef.current}`;
@@ -81,6 +83,7 @@ export function WorkspaceShell() {
   const handleImageDraftConsumed = useCallback(() => {
     workspace.setRetryData(null);
     setReferenceDraft(null);
+    setReversePromptDraft(null);
   }, [workspace]);
 
   // Checking debounce state
@@ -160,8 +163,10 @@ export function WorkspaceShell() {
         parallelCount: workspace.retryData.parallelCount,
         refImages: workspace.retryData.refImages,
       }
+      : reversePromptDraft
+        ? { prompt: reversePromptDraft.prompt }
       : undefined
-  ), [workspace.retryData]);
+  ), [reversePromptDraft, workspace.retryData]);
 
   const generationJobs = useMemo(
     () => [...workspace.textJobs, ...workspace.imageJobs].sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at)),
@@ -400,6 +405,13 @@ export function WorkspaceShell() {
                   wideMode={wideMode}
                   disabled={!workspace.hasApiKey}
                   onConfigureApiKey={() => setSettingsOpen(true)}
+                  onUsePrompt={prompt => {
+                    workspace.setRetryData(null);
+                    setReferenceDraft(null);
+                    setReversePromptDraft({ id: ++reversePromptDraftIdRef.current, prompt });
+                    setActiveTab('image-generation');
+                    showToast('已导入到生图输入框', 'success');
+                  }}
                 />
               </TabsContent>
 

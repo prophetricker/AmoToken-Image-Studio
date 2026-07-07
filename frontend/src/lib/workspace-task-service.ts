@@ -16,6 +16,8 @@ import {
 } from '@/lib/model-capabilities';
 import { generateUUID } from '@/lib/uuid';
 import { downloadAndStoreImages, type DownloadResult, type ImageDownloadProgressItem } from '@/lib/image-downloader';
+import { estimateImageCost } from '@/lib/image-cost-estimator';
+import { classifyFailureFromMessage, getTaskFailureDisplayInfo } from '@/lib/task-failure';
 
 export interface TextToImageSubmitInput {
   prompts: string[];
@@ -48,7 +50,7 @@ export interface SubmitActions {
   addJob: (job: StoredJob) => void;
   replaceJob: (jobId: string, updater: (job: StoredJob) => StoredJob) => void;
   completeJob: (jobId: string, job: StoredJob) => Promise<void>;
-  failJob: (jobId: string, error: string, options?: { terminal?: boolean }) => Promise<void>;
+  failJob: (jobId: string, error: string, options?: { terminal?: boolean; patch?: Partial<StoredJob> }) => Promise<void>;
   /** 可选：返回最新 job 快照，供异步流程避免使用过期闭包。 */
   getJob?: (jobId: string) => StoredJob | undefined;
 }
@@ -117,6 +119,8 @@ function createBaseJob(
     style: gptImageStyle,
     background: gptImageBackground,
   });
+  const now = new Date().toISOString();
+  const referenceImageCount = refImages?.length || 0;
 
   return {
     id: generateUUID(),
@@ -133,8 +137,46 @@ function createBaseJob(
     gptImageStyle: advancedParams.style,
     gptImageBackground: advancedParams.background,
     parallelCount,
-    created_at: new Date().toISOString(),
+    created_at: now,
+    startedAt: now,
+    costEstimate: estimateImageCost({
+      mode,
+      outputSize,
+      quality: advancedParams.quality,
+      count: parallelCount,
+      referenceImageCount,
+    }),
+    billingStatus: 'unverified',
     refImages,
+    referenceImageCount,
+  };
+}
+
+function getCompletionMetadata(job: StoredJob): Pick<StoredJob, 'completedAt' | 'elapsedMs' | 'billingStatus'> {
+  const completedAt = new Date().toISOString();
+  const startedAt = Date.parse(job.startedAt || job.created_at);
+  const completedTime = Date.parse(completedAt);
+  return {
+    completedAt,
+    elapsedMs: Number.isFinite(startedAt) ? Math.max(0, completedTime - startedAt) : undefined,
+    billingStatus: 'pending-newapi-check',
+  };
+}
+
+function buildFailedJobFromTask(job: StoredJob, task: NovaTaskResponse): StoredJob {
+  const error = task.error || (task.status === 'expired' ? '该任务已超出取回时间' : '后端任务失败');
+  const classification = classifyFailureFromMessage(error);
+  const display = getTaskFailureDisplayInfo(error);
+
+  return {
+    ...job,
+    ...getCompletionMetadata(job),
+    status: 'failed',
+    error,
+    networkError: classification.reason === 'network',
+    terminal: task.status === 'expired' ? true : classification.terminal,
+    failureReason: task.status === 'expired' ? 'expired' : classification.reason,
+    failureStage: task.status === 'expired' ? '结果取回' : display.stage,
   };
 }
 
@@ -143,6 +185,7 @@ export function buildCompletedJobFromTask(job: StoredJob, task: NovaTaskResponse
   if (task.status === 'completed' && images.length > 0) {
     return {
       ...job,
+      ...getCompletionMetadata(job),
       status: 'completed',
       images,
       imageData: images[0],
@@ -151,11 +194,7 @@ export function buildCompletedJobFromTask(job: StoredJob, task: NovaTaskResponse
     };
   }
 
-  return {
-    ...job,
-    status: 'failed',
-    error: task.error || (task.status === 'expired' ? '该任务已超出取回时间' : '后端任务失败'),
-  };
+  return buildFailedJobFromTask(job, task);
 }
 
 export async function finalizeCompletedServerTask(
@@ -171,6 +210,7 @@ export async function finalizeCompletedServerTask(
     if (!hasUrlImages) {
       const finalJob: StoredJob = {
         ...job,
+        ...getCompletionMetadata(job),
         status: 'completed',
         images,
         imageData: images[0],
@@ -188,6 +228,7 @@ export async function finalizeCompletedServerTask(
 
     await actions.completeJob(job.id, {
       ...job,
+      ...getCompletionMetadata(job),
       status: 'completed',
       images,
       imageData: images[0],
@@ -208,6 +249,7 @@ export async function finalizeCompletedServerTask(
     const allCached = remainingUrlCount === 0;
     const finalJob: StoredJob = {
       ...job,
+      ...getCompletionMetadata(job),
       status: 'completed',
       images: finalImages,
       imageData: finalImages[0],
@@ -228,12 +270,11 @@ export async function finalizeCompletedServerTask(
     return;
   }
 
-  const finalJob: StoredJob = {
-    ...job,
-    status: 'failed',
-    error: task.error || (task.status === 'expired' ? '该任务已超出取回时间' : '后端任务失败'),
-  };
-  await actions.failJob(job.id, finalJob.error || '任务失败');
+  const finalJob = buildFailedJobFromTask(job, task);
+  await actions.failJob(job.id, finalJob.error || '任务失败', {
+    terminal: finalJob.terminal,
+    patch: finalJob,
+  });
 }
 
 export interface RetryDownloadResult {

@@ -1,11 +1,28 @@
 import type { NovaTaskResponse, NovaTaskStatus } from '@/lib/ccode-task-client';
 
-export type FailureReason = 'restart' | 'expired' | 'api' | 'network' | 'rate_limit' | 'queue_full' | 'unknown';
+export type FailureReason =
+  | 'restart'
+  | 'expired'
+  | 'api'
+  | 'upstream'
+  | 'complexity'
+  | 'content_policy'
+  | 'network'
+  | 'rate_limit'
+  | 'queue_full'
+  | 'unknown';
 
 export interface FailureClassification {
   /** true 表示后端已经明确判定不可恢复，前端不应再展示"查看进度"按钮 */
   terminal: boolean;
   reason: FailureReason;
+}
+
+export interface TaskFailureDisplayInfo {
+  title: string;
+  stage: string;
+  suggestion: string;
+  billingNote: string;
 }
 
 const SERVER_RESTART_MARKERS = [
@@ -17,6 +34,29 @@ const API_FAILURE_PATTERNS = [
   /^API 请求失败:\s*\d{3}/,
   /^所有图片生成失败/,
   /响应中无图片数据/,
+];
+
+const UPSTREAM_FAILURE_FRAGMENTS = [
+  '502 upstream request failed',
+  'upstream request failed',
+  'bad gateway',
+  '上游',
+];
+
+const COMPLEXITY_FAILURE_FRAGMENTS = [
+  'too complex',
+  'complex request',
+  '请求过于复杂',
+  '生成复杂',
+];
+
+const CONTENT_POLICY_FRAGMENTS = [
+  'content_policy',
+  'safety',
+  'policy',
+  '违规',
+  '安全',
+  '内容限制',
 ];
 
 const RATE_LIMIT_MARKERS = [
@@ -48,6 +88,7 @@ const TIMEOUT_ERROR_FRAGMENTS = [
   'timeout',
   'timed out',
   'abort',
+  '超时',
   '请求超时',
   '高分辨率图片生成需要更长时间',
 ];
@@ -58,6 +99,21 @@ function isServerRestartError(message: string): boolean {
 
 function isApiFailureMessage(message: string): boolean {
   return API_FAILURE_PATTERNS.some(re => re.test(message));
+}
+
+function isUpstreamFailureMessage(message: string): boolean {
+  const lower = message.toLowerCase();
+  return UPSTREAM_FAILURE_FRAGMENTS.some(fragment => lower.includes(fragment.toLowerCase()));
+}
+
+function isComplexityFailureMessage(message: string): boolean {
+  const lower = message.toLowerCase();
+  return COMPLEXITY_FAILURE_FRAGMENTS.some(fragment => lower.includes(fragment.toLowerCase()));
+}
+
+function isContentPolicyMessage(message: string): boolean {
+  const lower = message.toLowerCase();
+  return CONTENT_POLICY_FRAGMENTS.some(fragment => lower.includes(fragment.toLowerCase()));
 }
 
 function isRateLimitMessage(message: string): boolean {
@@ -85,6 +141,9 @@ function classifyFailureMessage(message: string | undefined): FailureClassificat
   if (isRateLimitMessage(msg)) return { terminal: true, reason: 'rate_limit' };
   if (isQueueFullMessage(msg)) return { terminal: true, reason: 'queue_full' };
   if (isNetworkErrorMessage(msg) || isTimeoutErrorMessage(msg)) return { terminal: false, reason: 'network' };
+  if (isUpstreamFailureMessage(msg)) return { terminal: true, reason: 'upstream' };
+  if (isComplexityFailureMessage(msg)) return { terminal: true, reason: 'complexity' };
+  if (isContentPolicyMessage(msg)) return { terminal: true, reason: 'content_policy' };
   if (isApiFailureMessage(msg)) return { terminal: true, reason: 'api' };
   return { terminal: false, reason: 'unknown' };
 }
@@ -107,6 +166,103 @@ export function classifyTaskFailure(task: Pick<NovaTaskResponse, 'status' | 'err
  */
 export function classifyFailureFromMessage(message: string | undefined): FailureClassification {
   return classifyFailureMessage(message);
+}
+
+export function getTaskFailureDisplayInfo(message: string | undefined): TaskFailureDisplayInfo {
+  const classification = classifyFailureMessage(message);
+  const billingNote = '失败通常不扣费，最终以 NewAPI/上游日志为准。';
+
+  switch (classification.reason) {
+    case 'upstream':
+      return {
+        title: '上游生成失败',
+        stage: '上游生成',
+        suggestion: '可尝试降低复杂度、减少角色/细节数量、换一种提示词，或稍后重试。',
+        billingNote,
+      };
+    case 'complexity':
+      return {
+        title: '请求可能过于复杂',
+        stage: '上游生成',
+        suggestion: '可拆分画面、减少同时出现的主体，或先生成主体再做局部编辑。',
+        billingNote,
+      };
+    case 'content_policy':
+      return {
+        title: '可能触发内容限制',
+        stage: '安全检查',
+        suggestion: '提示词可能被拒绝或安全改写。请调整敏感描述后重试。',
+        billingNote,
+      };
+    case 'network':
+      return {
+        title: '网络或超时错误',
+        stage: '前端连接',
+        suggestion: '可稍后重试，或点击查看进度确认服务端任务是否仍在继续。',
+        billingNote,
+      };
+    case 'rate_limit':
+      return {
+        title: '请求过于频繁',
+        stage: '提交任务',
+        suggestion: '请稍等一会儿再提交新任务。',
+        billingNote,
+      };
+    case 'queue_full':
+      return {
+        title: '当前队列较满',
+        stage: '提交任务',
+        suggestion: '请等待已有任务完成后再试。',
+        billingNote,
+      };
+    case 'restart':
+      return {
+        title: '服务重启导致中断',
+        stage: '服务端任务',
+        suggestion: '请重新提交任务。',
+        billingNote,
+      };
+    case 'expired':
+      return {
+        title: '任务已过期',
+        stage: '结果取回',
+        suggestion: '结果保留时间已过，请重新生成。',
+        billingNote,
+      };
+    case 'api':
+      return {
+        title: 'API 请求失败',
+        stage: '上游 API',
+        suggestion: '请检查提示词、参数或稍后重试。',
+        billingNote,
+      };
+    case 'unknown':
+    default:
+      return {
+        title: '任务失败',
+        stage: '未知阶段',
+        suggestion: '可稍后重试；如果反复失败，请把错误信息发给管理员核对。',
+        billingNote,
+      };
+  }
+}
+
+const SENSITIVE_PROMPT_FRAGMENTS = [
+  '色情',
+  '裸露',
+  '未成年',
+  'nsfw',
+  'nude',
+  'porn',
+  'sexual',
+];
+
+export function getSensitivePromptWarning(prompt: string): string | null {
+  const lower = prompt.toLowerCase();
+  const hit = SENSITIVE_PROMPT_FRAGMENTS.some(fragment => lower.includes(fragment.toLowerCase()));
+  return hit
+    ? '提示词可能触发内容限制，上游可能拒绝或改写生成结果。'
+    : null;
 }
 
 /** 404 等价于任务已被删除/过期，不可恢复 */

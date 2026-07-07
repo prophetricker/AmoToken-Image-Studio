@@ -4,6 +4,7 @@ import { downloadAndStoreImages } from '@/lib/image-downloader';
 import type { StoredJob } from '@/lib/job-store';
 import { AMOTOKEN_IMAGE_MODEL_ID, saveAmoTokenToken } from '@/lib/nova-models';
 import {
+  buildCompletedJobFromTask,
   finalizeCompletedServerTask,
   submitImageToImage,
   submitTextToImage,
@@ -126,6 +127,36 @@ describe('submitTextToImage', () => {
     }));
     expect(getJob().serverTaskId).toBe('task-advanced-1');
   });
+
+  it('records local start time and estimated cost on submitted jobs', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-06T08:00:00.000Z'));
+    const job = makeJob();
+    const { actions } = createActions(job);
+
+    await submitTextToImage({
+      prompts: ['complex family portrait'],
+      outputSize: '2K',
+      aspectRatio: '1:1',
+      temperature: 1,
+      model: AMOTOKEN_IMAGE_MODEL_ID,
+      gptImageQuality: 'high',
+      gptImageStyle: 'vivid',
+      gptImageBackground: 'opaque',
+      parallelCount: 1,
+    }, actions, vi.fn());
+
+    expect(actions.addJob).toHaveBeenCalledWith(expect.objectContaining({
+      startedAt: '2026-07-06T08:00:00.000Z',
+      costEstimate: expect.objectContaining({
+        min: 0.08,
+        max: 0.13,
+        currency: 'CNY',
+      }),
+      billingStatus: 'unverified',
+    }));
+    vi.useRealTimers();
+  });
 });
 
 describe('submitImageToImage', () => {
@@ -157,6 +188,40 @@ describe('submitImageToImage', () => {
     expect(actions.addJob).not.toHaveBeenCalled();
     expect(onError).toHaveBeenCalledWith('多图融合最多支持 4 张参考图');
   });
+
+  it('records fusion cost estimates when more than one reference image is submitted', async () => {
+    const job = makeJob({ mode: 'image-to-image' });
+    const { actions } = createActions(job);
+
+    await submitImageToImage({
+      prompt: 'blend these references',
+      files: [
+        { id: '1', name: '1.png', dataUrl: 'data:image/png;base64,one', mimeType: 'image/png' },
+        { id: '2', name: '2.png', dataUrl: 'data:image/png;base64,two', mimeType: 'image/png' },
+      ],
+      outputSize: '2K',
+      aspectRatio: '16:9',
+      temperature: 1,
+      model: 'amotoken-gpt-image-2',
+      gptImageQuality: 'medium',
+      gptImageStyle: 'auto',
+      gptImageBackground: 'opaque',
+      parallelCount: 1,
+    }, actions, vi.fn());
+
+    expect(actions.addJob).toHaveBeenCalledWith(expect.objectContaining({
+      refImages: expect.arrayContaining([
+        expect.objectContaining({ id: '1' }),
+        expect.objectContaining({ id: '2' }),
+      ]),
+      referenceImageCount: 2,
+      costEstimate: expect.objectContaining({
+        min: 0.12,
+        max: 0.13,
+        currency: 'CNY',
+      }),
+    }));
+  });
 });
 
 describe('finalizeCompletedServerTask', () => {
@@ -181,6 +246,45 @@ describe('finalizeCompletedServerTask', () => {
     expect(getJob().serverTaskAcked).toBe(true);
     expect(getJob().imageDownloadProgress).toBeUndefined();
     expect(mockedAckNovaTask).toHaveBeenCalledWith('task-1');
+  });
+
+  it('adds elapsed time and pending billing status when a task completes', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-06T08:00:56.000Z'));
+    const job = makeJob({
+      startedAt: '2026-07-06T08:00:00.000Z',
+      costEstimate: { currency: 'CNY', min: 0.08, max: 0.13, source: 'gray-log-estimate' },
+    });
+    const { actions, getJob } = createActions(job);
+
+    await finalizeCompletedServerTask(job, makeCompletedTask(['base64-image']), actions);
+
+    expect(getJob()).toEqual(expect.objectContaining({
+      status: 'completed',
+      completedAt: '2026-07-06T08:00:56.000Z',
+      elapsedMs: 56000,
+      billingStatus: 'pending-newapi-check',
+    }));
+    vi.useRealTimers();
+  });
+
+  it('builds a failed job with failure explanation and billing ambiguity', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-06T08:00:56.000Z'));
+    const failed = buildCompletedJobFromTask(
+      makeJob({ startedAt: '2026-07-06T08:00:00.000Z' }),
+      { id: 'task-1', status: 'failed', error: 'API 请求失败: 502 Upstream request failed' }
+    );
+
+    expect(failed).toEqual(expect.objectContaining({
+      status: 'failed',
+      completedAt: '2026-07-06T08:00:56.000Z',
+      elapsedMs: 56000,
+      failureReason: 'upstream',
+      failureStage: '上游生成',
+      billingStatus: 'pending-newapi-check',
+    }));
+    vi.useRealTimers();
   });
 
   it('部分 URL 图片缓存失败时保留 URL 引用和失败进度且不 ack', async () => {

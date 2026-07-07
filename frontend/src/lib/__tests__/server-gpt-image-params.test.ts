@@ -44,11 +44,18 @@ describe('backend GPT Image advanced params forwarding', () => {
     expect(serverSource).toContain('return getSupportedGptImageSize(request.model, request.outputSize, request.aspectRatio)');
     expect(serverSource).toContain('return requestGptImage(apiKey, request, resolveGptImageRequestSize(request), { baseUrl });');
   });
+
+  it('does not describe early upstream disconnects as a full 30-minute timeout', () => {
+    expect(serverSource).toContain('上游连接提前中断或超时');
+    expect(serverSource).not.toContain('请求超时（${REQUEST_TIMEOUT_MS / 1000}秒）');
+  });
 });
 
 describe('AmoToken forced base URL guard', () => {
   it('defines NOVA_FORCE_BASE_URL support and a resolver for OpenAI-compatible requests', () => {
+    expect(serverSource).toContain('NOVA_INTERNAL_OPENAI_BASE_URL');
     expect(serverSource).toContain('NOVA_FORCE_BASE_URL');
+    expect(serverSource).toContain('env.NOVA_INTERNAL_OPENAI_BASE_URL || env.NOVA_FORCE_BASE_URL');
     expect(serverSource).toContain('function resolveForcedOpenAiBaseUrl()');
     expect(serverSource).toContain('function resolveOpenAiCompatibleBaseUrl');
   });
@@ -56,6 +63,13 @@ describe('AmoToken forced base URL guard', () => {
   it('stores the effective task base URL instead of trusting client baseUrl', () => {
     expect(serverSource).toContain('const effectiveBaseUrl = resolveOpenAiCompatibleBaseUrl(body.protocol, body.baseUrl);');
     expect(serverSource).toContain('baseUrl: effectiveBaseUrl,');
+    expect(serverSource).toContain('baseUrlSource: getOpenAiBaseUrlSource(effectiveBaseUrl)');
+  });
+
+  it('logs the effective image upstream route without secrets', () => {
+    expect(serverSource).toContain('function describeBaseUrlForLog(baseUrl)');
+    expect(serverSource).toContain('[upstream] gpt-image endpoint=');
+    expect(serverSource).toContain('baseUrlSource=${getOpenAiBaseUrlSource(baseUrl)}');
   });
 
   it('uses the forced OpenAI-compatible base URL for text proxy and model proxy', () => {

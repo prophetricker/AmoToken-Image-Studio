@@ -39,6 +39,8 @@ import { dispatchImageActionToast } from '@/lib/image-actions';
 import type { AspectRatio, OutputSize, RefImageData } from '@/lib/job-store';
 import type { ImageFormSettings } from '@/lib/form-settings';
 import type { ImageToImageSubmitInput, TextToImageSubmitInput } from '@/lib/workspace-task-service';
+import { estimateImageCost, formatCostEstimate } from '@/lib/image-cost-estimator';
+import { getSensitivePromptWarning } from '@/lib/task-failure';
 import { cn } from '@/lib/utils';
 
 const WORKBENCH_SETTINGS_KEY = 'nova-image-generation-settings';
@@ -142,7 +144,14 @@ export function ImageGenerationWorkbench({
   const aspectRatioOptions = useMemo(() => getAspectRatioOptions(model, outputSize), [model, outputSize]);
   const currentMode: WorkbenchMode = pendingFiles.length > 0 ? 'image-to-image' : 'text-to-image';
   const autoLayoutLocked = outputSize === 'auto';
-  const disabledMessage = '请先在设置中粘贴 AmoToken 令牌，保存后即可开始生成图片。';
+  const disabledMessage = '请先粘贴 AmoToken 令牌，保存后选择模型，就可以开始第一张图。';
+  const costEstimate = useMemo(() => estimateImageCost({
+    mode: currentMode,
+    outputSize,
+    quality: gptImageAdvancedParams.quality,
+    count: parallelCount,
+  }), [currentMode, outputSize, gptImageAdvancedParams.quality, parallelCount]);
+  const sensitivePromptWarning = useMemo(() => getSensitivePromptWarning(prompt), [prompt]);
 
   const handleParamsChange = useCallback((patch: Partial<GenerationParamsValue>) => {
     if (patch.model !== undefined) setModel(patch.model);
@@ -218,6 +227,35 @@ export function ImageGenerationWorkbench({
       cancelled = true;
     };
   }, [initialData]);
+
+  useEffect(() => {
+    if (disabled || !settingsReady || initialData) return;
+
+    const nextModel = normalizeModel(model);
+    if (!nextModel || nextModel === model) return;
+
+    const validSizes = getValidOutputSizes(nextModel);
+    const nextOutputSize: OutputSize = validSizes.includes(outputSize) ? outputSize : validSizes[0];
+    const nextCustomSize = supportsCustomSize(nextModel) && nextOutputSize !== 'auto'
+      ? normalizeCustomImageSize(customSize, getCustomSizeMaxSide(nextModel))
+      : undefined;
+    const validRatios = getAspectRatioOptions(nextModel, nextOutputSize).map(a => a.value);
+    const nextAspectRatio: AspectRatio = validRatios.includes(aspectRatio) ? aspectRatio : (validRatios[0] || '1:1');
+
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setModel(nextModel);
+      setOutputSize(nextOutputSize);
+      setCustomSize(nextCustomSize);
+      setAspectRatio(nextAspectRatio);
+      setGptImageAdvancedParams(getGptImageAdvancedParamsForModel(nextModel, gptImageAdvancedParams));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [disabled, settingsReady, initialData, model, outputSize, customSize, aspectRatio, gptImageAdvancedParams]);
 
   useEffect(() => {
     if (!settingsReady) return;
@@ -588,7 +626,7 @@ export function ImageGenerationWorkbench({
               <p className="text-base font-medium text-foreground">AmoToken 令牌未配置</p>
               <p className="mt-2 text-sm text-muted-foreground">{disabledMessage}</p>
             </div>
-            <Button onClick={() => setMissingApiKeyDialogOpen(true)}>配置</Button>
+            <Button onClick={() => setMissingApiKeyDialogOpen(true)}>先粘贴 AmoToken 令牌</Button>
           </div>
         ) : (
           <>
@@ -668,6 +706,21 @@ export function ImageGenerationWorkbench({
                 onChange={handleParamsChange}
               />
             </div>
+
+            <div className="flex flex-wrap items-center gap-2 px-3 pb-2 text-xs text-muted-foreground sm:px-4">
+              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-primary">
+                预估费用：{formatCostEstimate(costEstimate)}
+              </span>
+              <span className="rounded-full bg-warning/10 px-2 py-0.5 text-warning">
+                实际扣费待 NewAPI 后台核对
+              </span>
+            </div>
+
+            {sensitivePromptWarning && (
+              <div className="mx-3 mb-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning sm:mx-4">
+                {sensitivePromptWarning}
+              </div>
+            )}
 
             <div className="ml-auto flex w-full justify-end gap-2 px-3 pb-2 sm:w-auto sm:px-4">
               <Button variant="ghost" size="icon" onClick={() => setQuickPromptOpen(true)} title="快速提示词">

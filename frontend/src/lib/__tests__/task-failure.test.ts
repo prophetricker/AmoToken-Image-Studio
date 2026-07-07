@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { classifyTaskFailure, classifyFailureFromMessage } from '@/lib/task-failure';
+import {
+  classifyTaskFailure,
+  classifyFailureFromMessage,
+  getSensitivePromptWarning,
+  getTaskFailureDisplayInfo,
+} from '@/lib/task-failure';
 import type { NovaTaskResponse } from '@/lib/ccode-task-client';
 
 function makeTask(overrides: Partial<NovaTaskResponse>): NovaTaskResponse {
@@ -44,6 +49,34 @@ describe('classifyTaskFailure', () => {
     const result = classifyTaskFailure(task);
     expect(result.terminal).toBe(true);
     expect(result.reason).toBe('api');
+  });
+
+  it('502 Upstream request failed explains upstream ambiguity without blaming copyright', () => {
+    const task = makeTask({ error: 'API 请求失败: 502 Upstream request failed' });
+    const result = classifyTaskFailure(task);
+    const display = getTaskFailureDisplayInfo(task.error);
+
+    expect(result.terminal).toBe(true);
+    expect(result.reason).toBe('upstream');
+    expect(display.title).toBe('上游生成失败');
+    expect(display.stage).toBe('上游生成');
+    expect(display.suggestion).toContain('降低复杂度');
+    expect(display.suggestion).toContain('换一种提示词');
+    expect(display.billingNote).toContain('失败通常不扣费');
+    expect(display.billingNote).toContain('最终以 NewAPI/上游日志为准');
+    expect(display.suggestion).not.toContain('侵权');
+  });
+
+  it('two-minute upstream disconnects are shown as network or upstream timeout, not a 30-minute elapsed timeout', () => {
+    const task = makeTask({ error: '所有图片生成失败: 上游连接提前中断或超时，请稍后重试。' });
+    const result = classifyTaskFailure(task);
+    const display = getTaskFailureDisplayInfo(task.error);
+
+    expect(result.terminal).toBe(false);
+    expect(result.reason).toBe('network');
+    expect(display.title).toBe('网络或超时错误');
+    expect(display.suggestion).toContain('查看进度');
+    expect(display.billingNote).toContain('失败通常不扣费');
   });
 
   it('所有图片生成失败汇总 → terminal=true', () => {
@@ -102,5 +135,17 @@ describe('classifyFailureFromMessage', () => {
     const r = classifyFailureFromMessage('');
     expect(r.terminal).toBe(false);
     expect(r.reason).toBe('unknown');
+  });
+});
+
+describe('prompt compliance hints', () => {
+  it('warns locally when a prompt may trigger content limits', () => {
+    const warning = getSensitivePromptWarning('生成色情裸露写真');
+    expect(warning).toContain('可能触发内容限制');
+    expect(warning).toContain('上游可能拒绝或改写');
+  });
+
+  it('does not warn for an ordinary image prompt', () => {
+    expect(getSensitivePromptWarning('给这个小鲨鱼戴一个海盗帽子')).toBeNull();
   });
 });

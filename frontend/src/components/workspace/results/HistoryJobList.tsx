@@ -2,12 +2,20 @@
 
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Loader2, X, RefreshCw } from 'lucide-react';
+import { AlertTriangle, Copy, Loader2, RotateCcw, X, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { Mode, StoredJob } from '@/lib/job-store';
 import { cn } from '@/lib/utils';
-import { getModelDisplayName } from '@/lib/model-capabilities';
+import {
+  getModelDisplayName,
+  getOutputSizeLabel,
+  GPT_IMAGE_BACKGROUND_OPTIONS,
+  GPT_IMAGE_QUALITY_OPTIONS,
+  GPT_IMAGE_STYLE_OPTIONS,
+} from '@/lib/model-capabilities';
 import { CompletedJobCard } from '@/components/workspace/results/CompletedJobCard';
+import { getBillingStatusLabel } from '@/lib/image-cost-estimator';
+import { getTaskFailureDisplayInfo } from '@/lib/task-failure';
 
 export type GenerationHistoryFilter = 'all' | 'text-to-image' | 'image-to-image';
 export type HistoryClearScope = GenerationHistoryFilter;
@@ -32,6 +40,35 @@ function useNow(enabled: boolean) {
   }, [enabled]);
 
   return now;
+}
+
+function formatElapsedTime(elapsedMs?: number): string {
+  if (!Number.isFinite(elapsedMs) || !elapsedMs) return '耗时待记录';
+  const seconds = Math.max(1, Math.round(elapsedMs / 1000));
+  if (seconds < 60) return `耗时 ${seconds} 秒`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest > 0 ? `耗时 ${minutes} 分 ${rest} 秒` : `耗时 ${minutes} 分`;
+}
+
+function getReferenceImageCount(job: StoredJob): number {
+  return Math.max(0, job.referenceImageCount || job.refImages?.length || 0);
+}
+
+function getModeLabel(job: StoredJob): string {
+  if (job.mode === 'image-to-image') return getReferenceImageCount(job) > 1 ? '多图融合' : '单图编辑';
+  if (job.mode === 'prompt-gallery') return '提示词广场';
+  return '文生图';
+}
+
+function summarizeText(value: string | undefined, maxLength: number): string {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength).trimEnd()}...`;
+}
+
+function getOptionLabel<T extends string>(options: { value: T; label: string }[], value?: T): string {
+  return options.find(option => option.value === value)?.label || value || '自动';
 }
 
 const WaitingJobCard = memo(function WaitingJobCard({
@@ -211,6 +248,16 @@ function VirtualJobList({
 
   if (!shouldRender) return null;
 
+  if (!wideMode && jobs.length <= 3) {
+    return (
+      <div className="space-y-4">
+        {jobs.map(job => (
+          <div key={job.id}>{renderJobCard(job)}</div>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div
       ref={parentRef}
@@ -256,6 +303,160 @@ function VirtualJobList({
     </div>
   );
 }
+
+const FailedJobCard = memo(function FailedJobCard({
+  job,
+  now,
+  isChecking,
+  cooldownEnd,
+  onRetry,
+  onClear,
+  onCheckStatus,
+}: {
+  job: StoredJob;
+  now: number;
+  isChecking: boolean;
+  cooldownEnd: number | undefined;
+  onRetry: (job: StoredJob) => void;
+  onClear: (jobId: string) => void;
+  onCheckStatus: (job: StoredJob) => void;
+}) {
+  const [copiedPrompt, setCopiedPrompt] = useState(false);
+  const [copiedError, setCopiedError] = useState(false);
+  const display = getTaskFailureDisplayInfo(job.error);
+  const allowCheckStatus = !job.terminal && !!job.serverTaskId;
+  const outputSizeLabel = job.custom_size || getOutputSizeLabel(job.output_size);
+  const failureStage = job.failureStage || display.stage;
+  const promptSummary = summarizeText(job.prompt, 72);
+  const suggestionSummary = summarizeText(display.suggestion, 120);
+  const errorSummary = summarizeText(job.error, 180);
+  const qualityLabel = getOptionLabel(GPT_IMAGE_QUALITY_OPTIONS, job.gptImageQuality);
+  const styleLabel = getOptionLabel(GPT_IMAGE_STYLE_OPTIONS, job.gptImageStyle);
+  const backgroundLabel = getOptionLabel(GPT_IMAGE_BACKGROUND_OPTIONS, job.gptImageBackground);
+  const referenceImageCount = getReferenceImageCount(job);
+
+  const copyText = async (text: string | undefined, kind: 'prompt' | 'error') => {
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      if (kind === 'prompt') {
+        setCopiedPrompt(true);
+        setTimeout(() => setCopiedPrompt(false), 1500);
+      } else {
+        setCopiedError(true);
+        setTimeout(() => setCopiedError(false), 1500);
+      }
+    } catch {
+      if (kind === 'prompt') setCopiedPrompt(false);
+      if (kind === 'error') setCopiedError(false);
+    }
+  };
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-destructive/20 bg-card p-4">
+      <div className="grid grid-cols-[3.5rem_minmax(0,1fr)] gap-3">
+        <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-lg bg-destructive/10 text-destructive">
+          <AlertTriangle className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 flex-1 space-y-2">
+          <div className="min-w-0">
+            <p
+              data-testid="failed-job-prompt-summary"
+              className="break-words text-base text-foreground"
+              title={job.prompt}
+            >
+              &quot;{promptSummary}&quot;
+            </p>
+            <p className="text-sm font-medium text-destructive">{display.title}</p>
+          </div>
+          <p
+            data-testid="failed-job-suggestion"
+            className="break-words text-sm text-muted-foreground"
+            title={display.suggestion}
+          >
+            {suggestionSummary}
+          </p>
+          <p className="text-xs text-warning">{display.billingNote}</p>
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="max-w-full break-words rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{getModeLabel(job)}</span>
+            <span className="max-w-full break-words rounded-full bg-muted px-2 py-0.5 text-muted-foreground" title={getModelDisplayName(job.model)}>{getModelDisplayName(job.model)}</span>
+            <span className="max-w-full break-words rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{outputSizeLabel}</span>
+            <span className="max-w-full break-words rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{job.aspect_ratio}</span>
+            <span className="max-w-full break-words rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{formatElapsedTime(job.elapsedMs)}</span>
+            <span className="max-w-full break-words rounded-full bg-destructive/10 px-2 py-0.5 text-destructive" title={`失败阶段：${failureStage}`}>失败阶段：{failureStage}</span>
+            <span className="max-w-full break-words rounded-full bg-warning/10 px-2 py-0.5 text-warning">{getBillingStatusLabel(job.billingStatus)}</span>
+          </div>
+          {job.error && (
+            <details className="text-xs text-muted-foreground">
+              <summary className="cursor-pointer select-none text-foreground">错误详情</summary>
+              <p
+                data-testid="failed-job-error-detail"
+                className="mt-1 max-h-28 overflow-y-auto break-words rounded-md bg-muted/40 p-2"
+                title={job.error}
+              >
+                {errorSummary}
+              </p>
+            </details>
+          )}
+          <details className="text-xs text-muted-foreground">
+            <summary className="cursor-pointer select-none text-foreground">完整参数</summary>
+            <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 rounded-md bg-muted/40 p-2 sm:grid-cols-3">
+              <span className="break-words">模型：{getModelDisplayName(job.model)}</span>
+              <span>尺寸：{outputSizeLabel}</span>
+              <span>比例：{job.aspect_ratio}</span>
+              <span>质量：{qualityLabel}</span>
+              <span>风格：{styleLabel}</span>
+              <span>背景：{backgroundLabel}</span>
+              {job.mode === 'image-to-image' && <span>参考图：{referenceImageCount || 1}</span>}
+              <span>数量：{job.parallelCount || 1}</span>
+            </div>
+          </details>
+          <div className="flex min-w-0 flex-wrap gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-1"
+              onClick={() => void copyText(job.prompt, 'prompt')}
+              aria-label="复制完整提示词"
+              title="复制完整提示词"
+            >
+              <Copy className="w-4 h-4" />
+              <span>{copiedPrompt ? '已复制提示词' : '复制提示词'}</span>
+            </Button>
+            {job.error && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1"
+                onClick={() => void copyText(job.error, 'error')}
+                aria-label="复制完整错误"
+                title="复制完整错误"
+              >
+                <Copy className="w-4 h-4" />
+                <span>{copiedError ? '已复制错误' : '复制错误'}</span>
+              </Button>
+            )}
+            {allowCheckStatus && (
+              <Button variant="ghost" size="sm" className="gap-1" onClick={() => onCheckStatus(job)} disabled={isChecking || (cooldownEnd !== undefined && now < cooldownEnd)} aria-label="查看进度">
+                {isChecking
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <RefreshCw className="w-4 h-4" />}
+                <span>进度</span>
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" className="gap-1" onClick={() => onRetry(job)} aria-label="重试">
+              <RotateCcw className="w-4 h-4" />
+              <span>重试</span>
+            </Button>
+            <Button variant="ghost" size="icon-sm" onClick={() => onClear(job.id)} title="删除" aria-label="删除">
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
 
 interface HistoryJobListProps {
   active: boolean;
@@ -311,34 +512,16 @@ export function HistoryJobList({
       return <CompletedJobCard job={job} onClear={() => onClear(job.id)} onRetry={onRetry} onRetryDownload={onRetryDownload} />;
     }
     if (job.status === 'failed') {
-      // terminal=true → 后端明确判定不可恢复，不显示"查看进度"
-      // 其他情况（默认 / 网络错误 / 未分类）都允许"查看进度"，让用户兜底
-      const allowCheckStatus = !job.terminal && !!job.serverTaskId;
       return (
-        <div className="rounded-xl border border-destructive/20 bg-card p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0 space-y-1">
-              <p className="truncate text-base text-foreground">&quot;{job.prompt}&quot;</p>
-              <p className="max-h-20 overflow-y-auto text-sm text-destructive">{job.error || '任务失败'}</p>
-              <p className="text-xs text-muted-foreground">{getModelDisplayName(job.model)}</p>
-            </div>
-            <div className="flex gap-1">
-              {allowCheckStatus && (
-                <Button variant="ghost" size="icon-sm" onClick={() => onCheckStatus(job)} disabled={checkingJobIds.has(job.id) || (cooldowns.get(job.id) !== undefined && now < cooldowns.get(job.id)!)} title="查看进度">
-                  {checkingJobIds.has(job.id)
-                    ? <Loader2 className="w-4 h-4 animate-spin" />
-                    : <RefreshCw className="w-4 h-4" />}
-                </Button>
-              )}
-              <Button variant="ghost" size="icon-sm" onClick={() => onRetry(job)} title="重试">
-                <Loader2 className="w-4 h-4" />
-              </Button>
-              <Button variant="ghost" size="icon-sm" onClick={() => onClear(job.id)} title="删除">
-                <X className="w-4 h-4" />
-              </Button>
-            </div>
-          </div>
-        </div>
+        <FailedJobCard
+          job={job}
+          now={now}
+          isChecking={checkingJobIds.has(job.id)}
+          cooldownEnd={cooldowns.get(job.id)}
+          onRetry={onRetry}
+          onClear={onClear}
+          onCheckStatus={onCheckStatus}
+        />
       );
     }
     return null;

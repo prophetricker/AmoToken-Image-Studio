@@ -66,6 +66,7 @@ export function GenerationParamsBar({ value, onChange, size = 'xs', className }:
   const customSizeAvailable = supportsCustomSize(model) && !autoLayoutLocked;
   const customSizeMaxSide = getCustomSizeMaxSide(model) || 2048;
   const displaySizeLabel = value.customSize || getOutputSizeLabel(value.outputSize);
+  const modelLabel = MODEL_OPTIONS.find(o => o.value === model)?.label || model;
   const handleModelChange = (newModel: ModelId) => {
     const nextGpt = getGptImageAdvancedParamsForModel(newModel, value.gptImageAdvancedParams);
     const nextSizeOptions = getSizeOptions(newModel);
@@ -107,9 +108,14 @@ export function GenerationParamsBar({ value, onChange, size = 'xs', className }:
     <div className={cn('flex flex-wrap items-center gap-1.5', className)}>
       {/* 模型选择 */}
       <Popover open={modelPopoverOpen} onOpenChange={setModelPopoverOpen}>
-        <PopoverTrigger className={cn(buttonVariants({ variant: 'outline', size }), 'gap-1')} title="模型选择">
+        <PopoverTrigger
+          className={cn(buttonVariants({ variant: 'outline', size: size === 'xs' ? 'sm' : size }), 'gap-1.5 px-2.5')}
+          title="模型选择"
+          aria-label={`模型：${modelLabel}`}
+        >
           <Sparkles className="h-3 w-3" />
-          <span className="shrink-0 truncate text-[11px]">{MODEL_OPTIONS.find(o => o.value === model)?.label}</span>
+          <span className="shrink-0 text-[11px] text-muted-foreground">模型：</span>
+          <span className="max-w-40 shrink truncate text-xs">{modelLabel}</span>
         </PopoverTrigger>
         <PopoverContent className="w-48 p-1" align="start">
           {MODEL_OPTIONS.map((option) => (

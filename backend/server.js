@@ -97,7 +97,8 @@ function resolveNovaApiBaseUrl() {
 }
 
 function resolveForcedOpenAiBaseUrl() {
-  return normalizeProtocolBaseUrl('openai', getRuntimeEnv().NOVA_FORCE_BASE_URL || '');
+  const env = getRuntimeEnv();
+  return normalizeProtocolBaseUrl('openai', env.NOVA_INTERNAL_OPENAI_BASE_URL || env.NOVA_FORCE_BASE_URL || '');
 }
 
 function resolveOpenAiCompatibleBaseUrl(protocol = 'openai', baseUrl = '') {
@@ -105,6 +106,23 @@ function resolveOpenAiCompatibleBaseUrl(protocol = 'openai', baseUrl = '') {
   if (forcedBaseUrl && protocol !== 'google') return forcedBaseUrl;
   const normalized = normalizeProtocolBaseUrl(protocol, baseUrl);
   return normalized || (protocol === 'google' ? normalizeProtocolBaseUrl('google', baseUrl) : resolveNovaApiBaseUrl());
+}
+
+function describeBaseUrlForLog(baseUrl) {
+  try {
+    const url = new URL(baseUrl);
+    return `${url.protocol}//${url.host}${url.pathname}`;
+  } catch {
+    return '<invalid-base-url>';
+  }
+}
+
+function getOpenAiBaseUrlSource(baseUrl) {
+  const forcedBaseUrl = resolveForcedOpenAiBaseUrl();
+  if (forcedBaseUrl && normalizeProtocolBaseUrl('openai', baseUrl) === forcedBaseUrl) {
+    return 'internal';
+  }
+  return 'client';
 }
 
 function hashPromptGalleryPassword(password) {
@@ -119,7 +137,6 @@ const DB_PATH = process.env.NOVA_TASK_DB || path.join(__dirname, 'nova-tasks.sql
 const TASK_TTL_MS = 12 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
-const IMAGE_STREAM_UNSUPPORTED_PATTERN = /(?:stream.*(?:unsupported|not supported|unknown|unrecognized|invalid)|(?:unsupported|not supported|unknown|unrecognized|invalid).*stream|stream.*(?:不支持|未知|无效)|(?:不支持|未知|无效).*stream)/i;
 // 开源版：不再硬编码模型列表，由前端通过 protocol 字段指定协议类型
 const VALID_PROTOCOLS = new Set(['google', 'openai']);
 const GPT_IMAGE_QUALITIES = new Set(['auto', 'high', 'medium', 'low']);
@@ -214,6 +231,27 @@ function getClientIp(req) {
 
 function hashApiKey(apiKey) {
   return createHash('sha256').update(String(apiKey || '')).digest('hex').slice(0, 24);
+}
+
+function createNextParsedUrl(req) {
+  const requestUrl = new URL(req.url || '/', `http://${req.headers.host || `${HOSTNAME}:${PORT}`}`);
+  const query = {};
+  for (const [key, value] of requestUrl.searchParams.entries()) {
+    if (Object.prototype.hasOwnProperty.call(query, key)) {
+      const current = query[key];
+      query[key] = Array.isArray(current) ? [...current, value] : [current, value];
+    } else {
+      query[key] = value;
+    }
+  }
+  return {
+    pathname: requestUrl.pathname,
+    query,
+    search: requestUrl.search,
+    hash: requestUrl.hash,
+    path: `${requestUrl.pathname}${requestUrl.search}`,
+    href: `${requestUrl.pathname}${requestUrl.search}${requestUrl.hash}`,
+  };
 }
 
 function cleanupTaskRuntimeState(taskId) {
@@ -612,7 +650,7 @@ function normalizeError(error) {
     return '网络连接失败。请检查服务器网络连接或稍后重试。';
   }
   if (/abort|timeout|timed out/i.test(message)) {
-    return `请求超时（${REQUEST_TIMEOUT_MS / 1000}秒）。高分辨率图片生成需要更长时间，请稍后重试。`;
+    return '上游连接提前中断或超时，请稍后重试。';
   }
   // 截断非预定义错误消息，避免泄露内部信息（文件路径、堆栈等）
   return message.length > 200 ? message.slice(0, 200) + '…' : message;
@@ -674,6 +712,7 @@ function createTask(body, req) {
     source: 'nova',
     protocol: body.protocol,
     baseUrl: effectiveBaseUrl,
+    baseUrlSource: getOpenAiBaseUrlSource(effectiveBaseUrl),
     prompt: body.prompt,
     outputSize: body.outputSize,
     customSize: body.customSize,
@@ -704,6 +743,11 @@ function createTask(body, req) {
   apiKeys.set(taskId, body.apiKey);
   taskRefImages.set(taskId, body.images);
   taskSources.set(taskId, source);
+  console.log(
+    `[task] created id=${taskId} mode=${body.mode} protocol=${body.protocol} ` +
+    `model=${body.model} baseUrlSource=${getOpenAiBaseUrlSource(effectiveBaseUrl)} ` +
+    `baseUrl=${describeBaseUrlForLog(effectiveBaseUrl)} parallel=${body.parallelCount}`
+  );
   // 递增 pending 计数
   if (source.ip) pendingCountByIp.set(source.ip, (pendingCountByIp.get(source.ip) || 0) + 1);
   if (source.apiKeyHash) pendingCountByApiKeyHash.set(source.apiKeyHash, (pendingCountByApiKeyHash.get(source.apiKeyHash) || 0) + 1);
@@ -1043,21 +1087,33 @@ async function parseGptImageResponse(response) {
   return extractImagePayload(data);
 }
 
-function isImageStreamUnsupportedError(error) {
-  const message = error instanceof Error ? error.message : String(error);
-  return IMAGE_STREAM_UNSUPPORTED_PATTERN.test(message);
-}
-
 async function requestGptImage(apiKey, request, resolvedSize, options = {}) {
   const baseUrl = options.baseUrl || resolveNovaApiBaseUrl();
   const endpoint = request.mode === 'image-to-image'
     ? '/v1/images/edits'
     : '/v1/images/generations';
-  const response = await fetchWithTimeout(
-    `${baseUrl}${endpoint}`,
-    createGptImageRequestInit(apiKey, request, resolvedSize, options)
-  );
-  return parseGptImageResponse(response);
+  const startedAt = Date.now();
+  let responseStatus = 'no-response';
+  try {
+    const response = await fetchWithTimeout(
+      `${baseUrl}${endpoint}`,
+      createGptImageRequestInit(apiKey, request, resolvedSize, options)
+    );
+    responseStatus = response.status;
+    const image = await parseGptImageResponse(response);
+    console.log(
+      `[upstream] gpt-image endpoint=${endpoint} status=${responseStatus} elapsedMs=${Date.now() - startedAt} ` +
+      `baseUrlSource=${getOpenAiBaseUrlSource(baseUrl)} baseUrl=${describeBaseUrlForLog(baseUrl)}`
+    );
+    return image;
+  } catch (error) {
+    console.warn(
+      `[upstream] gpt-image endpoint=${endpoint} status=${responseStatus} elapsedMs=${Date.now() - startedAt} ` +
+      `baseUrlSource=${getOpenAiBaseUrlSource(baseUrl)} baseUrl=${describeBaseUrlForLog(baseUrl)} ` +
+      `error=${normalizeError(error)}`
+    );
+    throw error;
+  }
 }
 
 // ===== 加强网络连接：启用 TCP keepalive，防止 Docker 回环连接被静默断开 =====
@@ -1760,18 +1816,19 @@ setInterval(cleanupRateLimitBuckets, CLEANUP_INTERVAL_MS).unref();
 const startServer = () => {
   const wss = setupWebSocketServer();
   const httpServer = http.createServer(async (req, res) => {
-    const parsedUrl = new URL(req.url || '/', `http://${req.headers.host || `${HOSTNAME}:${PORT}`}`);
-    if (parsedUrl.pathname?.startsWith('/api/nova/')) {
-      const handled = await handleApi(req, res, parsedUrl.pathname);
+    const parsedUrl = createNextParsedUrl(req);
+    const pathname = parsedUrl.pathname || '/';
+    if (pathname.startsWith('/api/nova/')) {
+      const handled = await handleApi(req, res, pathname);
       if (handled || res.headersSent || res.writableEnded) return;
     }
     if (!IS_DEV) {
-      if (serveStatic(req, res, parsedUrl.pathname || '/')) return;
+      if (serveStatic(req, res, pathname)) return;
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
       res.end('Not Found');
       return;
     }
-    handle(req, res, req.url || '/');
+    handle(req, res, parsedUrl);
   });
 
   const nextUpgradeHandler = IS_DEV && typeof app.getUpgradeHandler === 'function'
@@ -1801,6 +1858,11 @@ const startServer = () => {
     const localUrl = `http://localhost:${PORT}`;
     const listenUrl = `http://${HOSTNAME}:${PORT}`;
     console.log(`Nova Image server ready on ${localUrl}`);
+    const internalOpenAiBaseUrl = resolveForcedOpenAiBaseUrl();
+    console.log(
+      `[config] openaiBaseUrlSource=${internalOpenAiBaseUrl ? 'internal' : 'client'} ` +
+      `openaiBaseUrl=${internalOpenAiBaseUrl ? describeBaseUrlForLog(internalOpenAiBaseUrl) : '<client-supplied>'}`
+    );
     if (HOSTNAME !== 'localhost' && HOSTNAME !== '127.0.0.1') {
       console.log(`Listening on ${listenUrl}`);
     }
