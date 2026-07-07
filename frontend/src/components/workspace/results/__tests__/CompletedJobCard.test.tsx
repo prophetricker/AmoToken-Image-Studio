@@ -57,7 +57,7 @@ describe('CompletedJobCard v0.6 metadata', () => {
     expect(screen.getByText('文生图')).toBeInTheDocument();
     expect(screen.getByText('耗时 56 秒')).toBeInTheDocument();
     expect(screen.getByText('约 ¥0.08-0.13')).toBeInTheDocument();
-    expect(screen.getByText('实际扣费待 NewAPI 后台核对')).toBeInTheDocument();
+    expect(screen.getByText('实际扣费待爱词元记录核对')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /复制提示词/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /下载/ })).toBeInTheDocument();
     expect(screen.getByText('完整参数')).toBeInTheDocument();

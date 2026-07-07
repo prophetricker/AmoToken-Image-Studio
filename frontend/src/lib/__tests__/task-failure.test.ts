@@ -4,6 +4,7 @@ import {
   classifyFailureFromMessage,
   getSensitivePromptWarning,
   getTaskFailureDisplayInfo,
+  sanitizeUserFacingFailureText,
 } from '@/lib/task-failure';
 import type { NovaTaskResponse } from '@/lib/ccode-task-client';
 
@@ -51,19 +52,19 @@ describe('classifyTaskFailure', () => {
     expect(result.reason).toBe('api');
   });
 
-  it('502 Upstream request failed explains upstream ambiguity without blaming copyright', () => {
+  it('502 Upstream request failed explains generation failure without exposing internal routing', () => {
     const task = makeTask({ error: 'API 请求失败: 502 Upstream request failed' });
     const result = classifyTaskFailure(task);
     const display = getTaskFailureDisplayInfo(task.error);
 
     expect(result.terminal).toBe(true);
     expect(result.reason).toBe('upstream');
-    expect(display.title).toBe('上游生成失败');
-    expect(display.stage).toBe('上游生成');
+    expect(display.title).toBe('生图失败');
+    expect(display.stage).toBe('生图服务');
     expect(display.suggestion).toContain('降低复杂度');
     expect(display.suggestion).toContain('换一种提示词');
     expect(display.billingNote).toContain('失败通常不扣费');
-    expect(display.billingNote).toContain('最终以 NewAPI/上游日志为准');
+    expect(display.billingNote).toContain('最终以爱词元记录为准');
     expect(display.suggestion).not.toContain('侵权');
   });
 
@@ -142,10 +143,18 @@ describe('prompt compliance hints', () => {
   it('warns locally when a prompt may trigger content limits', () => {
     const warning = getSensitivePromptWarning('生成色情裸露写真');
     expect(warning).toContain('可能触发内容限制');
-    expect(warning).toContain('上游可能拒绝或改写');
+    expect(warning).toContain('生图服务可能拒绝或改写');
   });
 
   it('does not warn for an ordinary image prompt', () => {
     expect(getSensitivePromptWarning('给这个小鲨鱼戴一个海盗帽子')).toBeNull();
+  });
+});
+
+describe('sanitizeUserFacingFailureText', () => {
+  it('hides internal NewAPI/upstream wording from user-facing errors', () => {
+    expect(sanitizeUserFacingFailureText('API 请求失败: 502 Upstream request failed')).toBe('生图失败：服务暂时无法完成这次生成');
+    expect(sanitizeUserFacingFailureText('失败通常不扣费，最终以 NewAPI/上游日志为准。')).toBe('失败通常不扣费，最终以爱词元记录为准。');
+    expect(sanitizeUserFacingFailureText('失败阶段：上游生成')).toBe('失败阶段：生图服务');
   });
 });

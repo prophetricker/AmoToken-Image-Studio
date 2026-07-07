@@ -70,7 +70,7 @@ export function CanvasConfigNodePanel({
   return (
     <div className="flex h-full flex-col gap-2 p-2 text-xs" onPointerDown={() => onSelect()}>
       <div className="min-h-0 flex-1 cursor-text overflow-auto rounded-lg border border-input bg-background p-1.5" data-no-drag>
-        <CanvasMentionEditor value={prompt} references={references} onChange={onPromptChange} placeholder="提示词，输入 @ 引用上游节点…" className="min-h-[56px] text-xs" />
+        <CanvasMentionEditor value={prompt} references={references} onChange={onPromptChange} placeholder="提示词，输入 @ 引用前置节点…" className="min-h-[56px] text-xs" />
       </div>
 
       <div className="shrink-0 space-y-2">
@@ -86,7 +86,7 @@ export function CanvasConfigNodePanel({
             onClick={onOptimizePrompt}
             disabled={busy || optimizing || !prompt.trim()}
             className="shrink-0 gap-1"
-            title="优化提示词（结合连接的上游图片/文字）"
+            title="优化提示词（结合连接的前置图片/文字）"
           >
             {optimizing ? <Spinner className="size-3.5" /> : <Wand2 className="size-3.5" />}
           </Button>

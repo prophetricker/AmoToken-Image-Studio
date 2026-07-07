@@ -281,7 +281,7 @@ describe('finalizeCompletedServerTask', () => {
       completedAt: '2026-07-06T08:00:56.000Z',
       elapsedMs: 56000,
       failureReason: 'upstream',
-      failureStage: '上游生成',
+      failureStage: '生图服务',
       billingStatus: 'pending-newapi-check',
     }));
     vi.useRealTimers();

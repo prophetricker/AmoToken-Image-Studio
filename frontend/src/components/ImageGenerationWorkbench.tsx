@@ -712,7 +712,7 @@ export function ImageGenerationWorkbench({
                 预估费用：{formatCostEstimate(costEstimate)}
               </span>
               <span className="rounded-full bg-warning/10 px-2 py-0.5 text-warning">
-                实际扣费待 NewAPI 后台核对
+                实际扣费待爱词元记录核对
               </span>
             </div>
 

@@ -184,7 +184,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
             <div className="space-y-1">
               <p className="text-sm font-medium">连接 AmoToken</p>
               <p className="text-xs text-muted-foreground">
-                后端会强制走 AmoToken 内部 NewAPI 地址，你只需要粘贴令牌。
+                后端会自动连接爱词元生图服务，你只需要粘贴令牌。
               </p>
             </div>
 

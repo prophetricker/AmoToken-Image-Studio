@@ -77,15 +77,15 @@ export function formatCostEstimate(estimate?: CostEstimate): string {
 export function getBillingStatusLabel(status?: BillingStatus): string {
   switch (status) {
     case 'pending-newapi-check':
-      return '实际扣费待 NewAPI 后台核对';
+      return '实际扣费待爱词元记录核对';
     case 'confirmed-newapi-summary':
-      return '已从 NewAPI 摘要确认';
+      return '已从爱词元记录确认';
     case 'confirmed-charged':
       return '已确认扣费';
     case 'confirmed-not-charged':
       return '已确认未扣费';
     case 'unverified':
     default:
-      return '实际扣费待 NewAPI 后台核对';
+      return '实际扣费待爱词元记录核对';
   }
 }

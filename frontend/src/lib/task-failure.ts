@@ -25,6 +25,22 @@ export interface TaskFailureDisplayInfo {
   billingNote: string;
 }
 
+export function sanitizeUserFacingFailureText(value: string | undefined): string {
+  return String(value || '')
+    .replace(/API 请求失败:\s*502\s*Upstream request failed/gi, '生图失败：服务暂时无法完成这次生成')
+    .replace(/502\s*Upstream request failed/gi, '生图失败：服务暂时无法完成这次生成')
+    .replace(/Upstream request failed/gi, '生图失败：服务暂时无法完成这次生成')
+    .replace(/NewAPI\/上游日志/g, '爱词元记录')
+    .replace(/NewAPI 后台/g, '爱词元记录')
+    .replace(/NewAPI 摘要/g, '爱词元记录')
+    .replace(/NewAPI/g, '爱词元')
+    .replace(/上游 API/g, '生图服务')
+    .replace(/上游生成/g, '生图服务')
+    .replace(/上游连接/g, '生图连接')
+    .replace(/上游/g, '生图服务')
+    .replace(/以\s+爱词元记录/g, '以爱词元记录');
+}
+
 const SERVER_RESTART_MARKERS = [
   '服务器重启，任务已中断',
   '服务器重启，任务已中断，请重新生成',
@@ -170,20 +186,20 @@ export function classifyFailureFromMessage(message: string | undefined): Failure
 
 export function getTaskFailureDisplayInfo(message: string | undefined): TaskFailureDisplayInfo {
   const classification = classifyFailureMessage(message);
-  const billingNote = '失败通常不扣费，最终以 NewAPI/上游日志为准。';
+  const billingNote = '失败通常不扣费，最终以爱词元记录为准。';
 
   switch (classification.reason) {
     case 'upstream':
       return {
-        title: '上游生成失败',
-        stage: '上游生成',
+        title: '生图失败',
+        stage: '生图服务',
         suggestion: '可尝试降低复杂度、减少角色/细节数量、换一种提示词，或稍后重试。',
         billingNote,
       };
     case 'complexity':
       return {
         title: '请求可能过于复杂',
-        stage: '上游生成',
+        stage: '生图服务',
         suggestion: '可拆分画面、减少同时出现的主体，或先生成主体再做局部编辑。',
         billingNote,
       };
@@ -231,8 +247,8 @@ export function getTaskFailureDisplayInfo(message: string | undefined): TaskFail
       };
     case 'api':
       return {
-        title: 'API 请求失败',
-        stage: '上游 API',
+        title: '生图请求失败',
+        stage: '生图服务',
         suggestion: '请检查提示词、参数或稍后重试。',
         billingNote,
       };
@@ -261,7 +277,7 @@ export function getSensitivePromptWarning(prompt: string): string | null {
   const lower = prompt.toLowerCase();
   const hit = SENSITIVE_PROMPT_FRAGMENTS.some(fragment => lower.includes(fragment.toLowerCase()));
   return hit
-    ? '提示词可能触发内容限制，上游可能拒绝或改写生成结果。'
+    ? '提示词可能触发内容限制，生图服务可能拒绝或改写生成结果。'
     : null;
 }
 

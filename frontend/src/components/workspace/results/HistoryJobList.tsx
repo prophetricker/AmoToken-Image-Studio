@@ -15,7 +15,7 @@ import {
 } from '@/lib/model-capabilities';
 import { CompletedJobCard } from '@/components/workspace/results/CompletedJobCard';
 import { getBillingStatusLabel } from '@/lib/image-cost-estimator';
-import { getTaskFailureDisplayInfo } from '@/lib/task-failure';
+import { getTaskFailureDisplayInfo, sanitizeUserFacingFailureText } from '@/lib/task-failure';
 
 export type GenerationHistoryFilter = 'all' | 'text-to-image' | 'image-to-image';
 export type HistoryClearScope = GenerationHistoryFilter;
@@ -326,10 +326,11 @@ const FailedJobCard = memo(function FailedJobCard({
   const display = getTaskFailureDisplayInfo(job.error);
   const allowCheckStatus = !job.terminal && !!job.serverTaskId;
   const outputSizeLabel = job.custom_size || getOutputSizeLabel(job.output_size);
-  const failureStage = job.failureStage || display.stage;
+  const failureStage = sanitizeUserFacingFailureText(job.failureStage || display.stage);
   const promptSummary = summarizeText(job.prompt, 72);
   const suggestionSummary = summarizeText(display.suggestion, 120);
-  const errorSummary = summarizeText(job.error, 180);
+  const displayError = sanitizeUserFacingFailureText(job.error);
+  const errorSummary = summarizeText(displayError, 180);
   const qualityLabel = getOptionLabel(GPT_IMAGE_QUALITY_OPTIONS, job.gptImageQuality);
   const styleLabel = getOptionLabel(GPT_IMAGE_STYLE_OPTIONS, job.gptImageStyle);
   const backgroundLabel = getOptionLabel(GPT_IMAGE_BACKGROUND_OPTIONS, job.gptImageBackground);
@@ -392,7 +393,7 @@ const FailedJobCard = memo(function FailedJobCard({
               <p
                 data-testid="failed-job-error-detail"
                 className="mt-1 max-h-28 overflow-y-auto break-words rounded-md bg-muted/40 p-2"
-                title={job.error}
+                title={displayError}
               >
                 {errorSummary}
               </p>
@@ -428,7 +429,7 @@ const FailedJobCard = memo(function FailedJobCard({
                 variant="ghost"
                 size="sm"
                 className="gap-1"
-                onClick={() => void copyText(job.error, 'error')}
+                onClick={() => void copyText(displayError, 'error')}
                 aria-label="复制完整错误"
                 title="复制完整错误"
               >

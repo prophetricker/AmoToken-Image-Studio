@@ -62,11 +62,11 @@ describe('HistoryJobList v0.6 task cards', () => {
       />
     );
 
-    expect(screen.getByText('上游生成失败')).toBeInTheDocument();
+    expect(screen.getByText('生图失败')).toBeInTheDocument();
     expect(screen.getByText(/可尝试降低复杂度/)).toBeInTheDocument();
     expect(screen.getByText(/失败通常不扣费/)).toBeInTheDocument();
-    expect(screen.getByText(/最终以 NewAPI\/上游日志为准/)).toBeInTheDocument();
-    expect(screen.getByText(/失败阶段：上游生成/)).toBeInTheDocument();
+    expect(screen.getByText(/最终以爱词元记录为准/)).toBeInTheDocument();
+    expect(screen.getByText(/失败阶段：生图服务/)).toBeInTheDocument();
     expect(screen.getByText('完整参数')).toBeInTheDocument();
     expect(screen.getByText(/模型：amotoken-gpt-image-2/)).toBeInTheDocument();
     expect(screen.getByText(/质量：自动/)).toBeInTheDocument();
@@ -78,7 +78,7 @@ describe('HistoryJobList v0.6 task cards', () => {
       '一个极其复杂的电影级长提示词，包含大量人物、背景、动作、材质、色彩、镜头、光影、情绪和后期细节。',
       '第二行继续描述更多复杂内容，确保卡片内只显示摘要，但悬停时仍能看到完整提示词，方便用户截取复制。',
     ].join('\n');
-    const longError = '网络或超时错误。可稍后重试，或点击查看进度确认服务端任务是否仍在继续。失败不一定代表已扣费，管理员可通过 NewAPI 日志核对。'.repeat(4);
+    const longError = '网络或超时错误。可稍后重试，或点击查看进度确认服务端任务是否仍在继续。失败不一定代表已扣费，管理员可通过爱词元记录核对。'.repeat(4);
 
     render(
       <HistoryJobList

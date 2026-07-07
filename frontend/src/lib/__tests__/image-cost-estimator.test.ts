@@ -61,8 +61,8 @@ describe('image cost estimates', () => {
     expect(fusion).toMatchObject({ min: 0.12, max: 0.13 });
   });
 
-  it('labels actual billing as pending NewAPI verification by default', () => {
-    expect(getBillingStatusLabel('pending-newapi-check')).toBe('实际扣费待 NewAPI 后台核对');
-    expect(getBillingStatusLabel('unverified')).toContain('待 NewAPI 后台核对');
+  it('labels actual billing as pending AmoToken record verification by default', () => {
+    expect(getBillingStatusLabel('pending-newapi-check')).toBe('实际扣费待爱词元记录核对');
+    expect(getBillingStatusLabel('unverified')).toContain('待爱词元记录核对');
   });
 });

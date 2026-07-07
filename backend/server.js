@@ -650,7 +650,7 @@ function normalizeError(error) {
     return '网络连接失败。请检查服务器网络连接或稍后重试。';
   }
   if (/abort|timeout|timed out/i.test(message)) {
-    return '上游连接提前中断或超时，请稍后重试。';
+    return '生图连接提前中断或超时，请稍后重试。';
   }
   // 截断非预定义错误消息，避免泄露内部信息（文件路径、堆栈等）
   return message.length > 200 ? message.slice(0, 200) + '…' : message;
@@ -934,7 +934,7 @@ function summarizeUnexpectedResponse(text) {
   const trimmed = String(text || '').trim();
   if (!trimmed) return '';
   if (isLikelyHtmlResponse(trimmed)) {
-    return '上游返回了 HTML 页面而不是 JSON。通常是 baseUrl 配置错误、请求被站点网关拦截，或该地址并非兼容的图片 API。';
+    return '生图服务返回了异常页面，请稍后重试或联系管理员。';
   }
   return trimmed.length > 200 ? `${trimmed.slice(0, 200)}…` : trimmed;
 }
@@ -1072,7 +1072,7 @@ async function parseGptImageResponse(response) {
   }
 
   if (isLikelyHtmlResponse(responseText)) {
-    throw new Error('上游返回了 HTML 页面而不是 JSON。通常是 baseUrl 配置错误、请求被站点网关拦截，或该地址并非兼容的图片 API。');
+    throw new Error('生图服务返回了异常页面，请稍后重试或联系管理员。');
   }
 
   const data = parseJsonSafely(responseText);
@@ -1193,7 +1193,7 @@ async function generateNovaGeminiImage(apiKey, request, options = {}) {
 
   const responseText = await response.text();
   if (isLikelyHtmlResponse(responseText)) {
-    throw new Error('上游返回了 HTML 页面而不是 JSON。通常是 baseUrl 配置错误、请求被站点网关拦截，或该地址并非兼容的图片 API。');
+    throw new Error('生图服务返回了异常页面，请稍后重试或联系管理员。');
   }
   const data = parseJsonSafely(responseText);
   if (!data) {
@@ -1724,10 +1724,10 @@ async function handleApi(req, res, pathname) {
 
         let data = null;
         try { data = await upstream.json(); } catch { /* ignore */ }
-        sendJson(res, upstream.status, data || { error: `上游返回 ${upstream.status}` });
+        sendJson(res, upstream.status, data || { error: `服务返回 ${upstream.status}` });
       } catch (error) {
         if (error && error.message && /abort|timeout/i.test(error.message)) {
-          sendJson(res, 504, { error: '代理请求上游超时' });
+          sendJson(res, 504, { error: '服务请求超时' });
         } else {
           sendJson(res, 502, { error: normalizeError(error) });
         }

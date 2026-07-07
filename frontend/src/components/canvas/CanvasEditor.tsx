@@ -1574,7 +1574,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
           hasPromptGalleryRoles
             ? "这是提示词广场导入的配置节点。优化时不要读取模板参考图，只使用已提供的目标角色/OC图；不要把目标角色/OC图转写成外貌文字，请保留并强化对用户上传角色图的引用，让生图模型直接参考图片理解角色。"
             : "",
-          upstreamText ? `已连接的上游文字参考：\n${upstreamText}` : "",
+          upstreamText ? `已连接的前置文字参考：\n${upstreamText}` : "",
         ].filter(Boolean).join("\n\n") || undefined;
 
         optimizeHandleRef.current = streamPromptOptimize(

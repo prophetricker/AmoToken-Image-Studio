@@ -46,7 +46,7 @@ describe('backend GPT Image advanced params forwarding', () => {
   });
 
   it('does not describe early upstream disconnects as a full 30-minute timeout', () => {
-    expect(serverSource).toContain('上游连接提前中断或超时');
+    expect(serverSource).toContain('生图连接提前中断或超时');
     expect(serverSource).not.toContain('请求超时（${REQUEST_TIMEOUT_MS / 1000}秒）');
   });
 });
