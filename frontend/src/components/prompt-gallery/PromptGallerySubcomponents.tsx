@@ -31,12 +31,14 @@ export const PromptCard = memo(function PromptCard({
   prompt, 
   onShowDetail,
   onShowImages,
+  onUsePrompt,
   imageCache,
   onImageLoad
 }: { 
   prompt: PromptGalleryItem & { uniqueKey: string };
   onShowDetail: () => void;
   onShowImages: (initialIndex?: number) => void;
+  onUsePrompt?: (prompt: string) => void;
   imageCache: Set<string>;
   onImageLoad: (url: string) => void;
 }) {
@@ -234,6 +236,21 @@ export const PromptCard = memo(function PromptCard({
               <Copy className="w-3.5 h-3.5" />
             )}
           </Button>
+          {onUsePrompt && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={(event) => {
+                event.stopPropagation();
+                onUsePrompt(prompt.content);
+              }}
+              className="h-7 px-2 flex-shrink-0"
+              title="用于生图"
+              aria-label="用于生图"
+            >
+              <Wand2 className="w-3.5 h-3.5" />
+            </Button>
+          )}
         </div>
       </div>
     </div>

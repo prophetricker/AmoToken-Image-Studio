@@ -8,6 +8,7 @@ import {
   ChevronRight,
   CloudUpload,
   Copy,
+  Save,
   Info,
   Loader2,
   ScanSearch,
@@ -48,6 +49,8 @@ import {
 
 import { MAX_UPLOAD_SIZE_BYTES } from '@/lib/constants';
 import { loadJsonFromStorage, saveJsonToStorage } from '@/lib/settings-storage';
+import { addTextAsset } from '@/lib/asset-store';
+import { dispatchImageActionToast } from '@/lib/image-actions';
 
 const REVERSE_SETTINGS_KEY = 'nova-reverse-prompt-settings';
 
@@ -423,6 +426,24 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
     }
   };
 
+  const handleSaveResultAsAsset = async (
+    result: ReverseResult,
+    sourceRef: string,
+  ) => {
+    if (!result.text) return;
+    try {
+      await addTextAsset({
+        content: result.text,
+        sourceKind: 'reverse-prompt',
+        sourceLabel: '反推提示词',
+        sourceRef,
+      });
+      dispatchImageActionToast('提示词素材已保存', 'success');
+    } catch (error) {
+      dispatchImageActionToast(error instanceof Error ? error.message : '保存提示词素材失败', 'error');
+    }
+  };
+
   const handleClearDraft = () => {
     setPendingFile(null);
     setUploadError(null);
@@ -639,6 +660,7 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
           streaming={streaming}
           copied={copyState === 'current'}
           onCopy={() => handleCopy(currentResult.text, 'current')}
+          onSaveAsset={() => void handleSaveResultAsAsset(currentResult, 'current')}
           onUsePrompt={onUsePrompt ? () => onUsePrompt(currentResult.text) : undefined}
           onAbort={streaming ? handleAbort : undefined}
         />
@@ -669,6 +691,7 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
                 inline
                 copied={copyState === 'previous'}
                 onCopy={() => handleCopy(previousResult.text, 'previous')}
+                onSaveAsset={() => void handleSaveResultAsAsset(previousResult, 'previous')}
                 onUsePrompt={onUsePrompt ? () => onUsePrompt(previousResult.text) : undefined}
               />
             </div>
@@ -692,6 +715,7 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
                 inline
                 copied={copyState === item.slot}
                 onCopy={() => void handleCopyHistory(item)}
+                onSaveAsset={() => void handleSaveResultAsAsset(toReverseResult(item), item.slot)}
                 onUsePrompt={onUsePrompt ? () => onUsePrompt(item.text) : undefined}
               />
             ))}
@@ -716,11 +740,12 @@ interface ResultPanelProps {
   copied: boolean;
   inline?: boolean;
   onCopy: () => void;
+  onSaveAsset?: () => void;
   onUsePrompt?: () => void;
   onAbort?: () => void;
 }
 
-function ResultPanel({ title, result, streaming, copied, inline, onCopy, onUsePrompt, onAbort }: ResultPanelProps) {
+function ResultPanel({ title, result, streaming, copied, inline, onCopy, onSaveAsset, onUsePrompt, onAbort }: ResultPanelProps) {
   const modelLabel = getReverseModelOption(result.model).label;
   const modeLabel = getReverseModeOption(result.mode).label;
   const isEmpty = result.text.length === 0;
@@ -761,6 +786,19 @@ function ResultPanel({ title, result, streaming, copied, inline, onCopy, onUsePr
             {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
             <span>{copied ? '已复制' : '复制'}</span>
           </Button>
+          {onSaveAsset && (
+            <Button
+              variant="ghost"
+              size="xs"
+              className="gap-1"
+              onClick={onSaveAsset}
+              disabled={isEmpty}
+              title="存素材"
+            >
+              <Save className="w-3.5 h-3.5" />
+              <span>存素材</span>
+            </Button>
+          )}
           {onUsePrompt && (
             <Button
               variant="outline"

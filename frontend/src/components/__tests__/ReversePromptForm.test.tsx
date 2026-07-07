@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   clearReverseDraft: vi.fn(),
   saveReverseResult: vi.fn(),
   saveReverseHistoryEntry: vi.fn(),
+  addTextAsset: vi.fn(),
   streamReversePrompt: vi.fn(),
   getConfiguredTextModel: vi.fn(),
   getDefaultConfiguredTextModel: vi.fn(),
@@ -34,6 +35,14 @@ vi.mock('@/lib/reverse-prompt-store', async importOriginal => {
 vi.mock('@/lib/upload-image-cache', () => ({
   prepareUploadImage: mocks.prepareUploadImage,
 }));
+
+vi.mock('@/lib/asset-store', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/lib/asset-store')>();
+  return {
+    ...actual,
+    addTextAsset: mocks.addTextAsset,
+  };
+});
 
 vi.mock('@/lib/model-endpoints', () => ({
   getConfiguredTextModel: mocks.getConfiguredTextModel,
@@ -91,6 +100,20 @@ beforeEach(() => {
   mocks.clearReverseDraft.mockResolvedValue(undefined);
   mocks.saveReverseResult.mockResolvedValue(undefined);
   mocks.saveReverseHistoryEntry.mockResolvedValue(undefined);
+  mocks.addTextAsset.mockResolvedValue({
+    id: 'text-asset-1',
+    kind: 'text',
+    hash: 'text-hash-1',
+    name: 'saved reverse prompt',
+    content: 'saved reverse prompt',
+    sizeBytes: 20,
+    tags: [],
+    note: '',
+    sourceKind: 'reverse-prompt',
+    sourceLabel: '反推提示词',
+    createdAt: 1772800000000,
+    updatedAt: 1772800000000,
+  });
   mocks.prepareUploadImage.mockResolvedValue({
     id: 'upload-1',
     name: 'shark.png',
@@ -176,5 +199,21 @@ describe('ReversePromptForm v0.6 history', () => {
       }));
     });
     expect(await screen.findByText(/second reverse prompt/)).toBeInTheDocument();
+  });
+
+  it('saves a reverse prompt result into the text asset library', async () => {
+    render(<ReversePromptForm />);
+
+    expect(await screen.findByText('历史记录')).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: '存素材' })[0]);
+
+    await waitFor(() => {
+      expect(mocks.addTextAsset).toHaveBeenCalledWith({
+        content: 'cinematic shark portrait',
+        sourceKind: 'reverse-prompt',
+        sourceLabel: '反推提示词',
+        sourceRef: 'history:1772800000000',
+      });
+    });
   });
 });

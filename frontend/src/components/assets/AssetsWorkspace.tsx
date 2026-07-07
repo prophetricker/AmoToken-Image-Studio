@@ -42,6 +42,7 @@ import {
   getSourceKindLabel,
   listAssets,
   updateImageAsset,
+  updateTextAsset,
   type AssetItem,
   type AssetSourceKind,
   type ImageAsset,
@@ -102,6 +103,7 @@ function uniqueTags(assets: AssetItem[]): string[] {
   for (const asset of assets) {
     if (isTextAsset(asset)) {
       hasTextAsset = true;
+      for (const tag of asset.tags || []) tags.add(tag);
       continue;
     }
     for (const tag of asset.tags) tags.add(tag);
@@ -136,21 +138,24 @@ async function prepareAssetMetadataImage(asset: ImageAsset, blob: Blob): Promise
 }
 
 function getTextEntryName(asset: TextAsset): string {
-  const content = asset.content.trim().split(/\s+/).join('-').replace(/[\\/:*?"<>|]+/g, '-').slice(0, 80);
-  return `${content || asset.id}.txt`;
+  const name = (asset.name || asset.content).trim().split(/\s+/).join('-').replace(/[\\/:*?"<>|]+/g, '-').slice(0, 80);
+  return `${name || asset.id}.txt`;
 }
 
 function matchesAsset(asset: AssetItem, query: string, tag: string, source: string): boolean {
   if (tag === PROMPT_TAG && !isTextAsset(asset)) return false;
-  if (tag && tag !== PROMPT_TAG && (!isImageAsset(asset) || !asset.tags.includes(tag))) return false;
+  if (tag && tag !== PROMPT_TAG && !(asset.tags || []).includes(tag)) return false;
   if (source && asset.sourceKind !== source) return false;
   const q = query.trim().toLowerCase();
   if (!q) return true;
   if (isTextAsset(asset)) {
     return [
+      asset.name || '',
       asset.content,
+      asset.note || '',
       asset.sourceLabel,
       asset.sourceRef || '',
+      (asset.tags || []).join(' '),
     ].some(value => value.toLowerCase().includes(q));
   }
   return [
@@ -272,7 +277,7 @@ export function AssetsWorkspace({ wideMode = false, active = true }: AssetsWorks
   const [viewSize, setViewSize] = useState<AssetViewSize>(() => loadAssetSettings().viewSize);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [previewImages, setPreviewImages] = useState<string[]>([]);
-  const [editingAsset, setEditingAsset] = useState<ImageAsset | null>(null);
+  const [editingAsset, setEditingAsset] = useState<AssetItem | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AssetItem | null>(null);
   const [deleteSelectedOpen, setDeleteSelectedOpen] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -286,7 +291,11 @@ export function AssetsWorkspace({ wideMode = false, active = true }: AssetsWorks
   const [editName, setEditName] = useState('');
   const [editTags, setEditTags] = useState('');
   const [editNote, setEditNote] = useState('');
+  const [editContent, setEditContent] = useState('');
   const [textDialogOpen, setTextDialogOpen] = useState(false);
+  const [textName, setTextName] = useState('');
+  const [textTags, setTextTags] = useState('');
+  const [textNote, setTextNote] = useState('');
   const [textContent, setTextContent] = useState('');
   const fullObjectUrlsRef = useRef<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -427,10 +436,16 @@ export function AssetsWorkspace({ wideMode = false, active = true }: AssetsWorks
   const saveTextAsset = useCallback(async () => {
     try {
       await addTextAsset({
+        name: textName,
         content: textContent,
+        tags: splitTags(textTags),
+        note: textNote,
         sourceKind: 'manual',
         sourceLabel: '手动导入',
       });
+      setTextName('');
+      setTextTags('');
+      setTextNote('');
       setTextContent('');
       setTextDialogOpen(false);
       await reload();
@@ -438,31 +453,41 @@ export function AssetsWorkspace({ wideMode = false, active = true }: AssetsWorks
     } catch (error) {
       dispatchImageActionToast(error instanceof Error ? error.message : '保存提示词素材失败', 'error');
     }
-  }, [reload, textContent]);
+  }, [reload, textContent, textName, textNote, textTags]);
 
-  const openEdit = useCallback((asset: ImageAsset) => {
+  const openEdit = useCallback((asset: AssetItem) => {
     setEditingAsset(asset);
-    setEditName(asset.name);
-    setEditTags(asset.tags.join(' '));
-    setEditNote(asset.note);
+    setEditName(isTextAsset(asset) ? asset.name || '' : asset.name);
+    setEditTags((asset.tags || []).join(' '));
+    setEditNote(asset.note || '');
+    setEditContent(isTextAsset(asset) ? asset.content : '');
     setMetadataSuggestion(null);
   }, []);
 
   const saveEdit = useCallback(async () => {
     if (!editingAsset || metadataGenerating) return;
     try {
-      await updateImageAsset(editingAsset.id, {
-        name: editName,
-        tags: splitTags(editTags),
-        note: editNote,
-      });
+      if (isTextAsset(editingAsset)) {
+        await updateTextAsset(editingAsset.id, {
+          name: editName,
+          tags: splitTags(editTags),
+          note: editNote,
+          content: editContent,
+        });
+      } else {
+        await updateImageAsset(editingAsset.id, {
+          name: editName,
+          tags: splitTags(editTags),
+          note: editNote,
+        });
+      }
       setEditingAsset(null);
       await reload();
       dispatchImageActionToast('素材已更新', 'success');
     } catch (error) {
       dispatchImageActionToast(error instanceof Error ? error.message : '更新素材失败', 'error');
     }
-  }, [editName, editNote, editTags, editingAsset, metadataGenerating, reload]);
+  }, [editContent, editName, editNote, editTags, editingAsset, metadataGenerating, reload]);
 
   const confirmDelete = useCallback(async () => {
     if (!deleteTarget) return;
@@ -534,6 +559,11 @@ export function AssetsWorkspace({ wideMode = false, active = true }: AssetsWorks
       for (const asset of assets.filter(item => selectedAssetIds.has(item.id))) {
         if (isTextAsset(asset)) {
           zip.file(getTextEntryName(asset), asset.content);
+          readme += `${getTextEntryName(asset)}\n`;
+          readme += `  名称: ${asset.name || '提示词素材'}\n`;
+          readme += `  来源: ${asset.sourceLabel}\n`;
+          readme += `  标签: ${(asset.tags || []).join('、') || '(无)'}\n`;
+          readme += `  备注: ${asset.note || '(无)'}\n\n`;
           count++;
           continue;
         }
@@ -568,7 +598,7 @@ export function AssetsWorkspace({ wideMode = false, active = true }: AssetsWorks
   }, [assets, packing, selectedAssetIds]);
 
   const generateEditMetadata = useCallback(async () => {
-    if (!editingAsset || metadataGenerating) return;
+    if (!editingAsset || isTextAsset(editingAsset) || metadataGenerating) return;
     let textModel;
     try {
       textModel = requireDefaultConfiguredTextModel('imageDescribe');
@@ -862,12 +892,36 @@ export function AssetsWorkspace({ wideMode = false, active = true }: AssetsWorks
                       title="选择素材"
                     />
                   </label>
+                  <div className="flex items-start justify-between gap-2 pl-7">
+                    <div className="min-w-0">
+                      <p className={cn('truncate font-medium text-foreground', viewSize === 'compact' ? 'text-xs' : 'text-sm')} title={asset.name}>
+                        {asset.name || '提示词素材'}
+                      </p>
+                      {viewSize !== 'compact' && (
+                        <p className="truncate text-[11px] text-muted-foreground">{asset.sourceLabel} · {formatAssetSize(asset.sizeBytes)}</p>
+                      )}
+                    </div>
+                    <button type="button" onClick={() => openEdit(asset)} className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground" title="编辑提示词素材" aria-label="编辑提示词素材">
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  {viewSize !== 'compact' && (asset.tags || []).length > 0 && (
+                    <div className="mt-2 flex h-5 flex-wrap gap-1 overflow-hidden pl-7">
+                      {(asset.tags || []).slice(0, viewSize === 'large' ? 6 : 3).map(tag => <Badge key={tag} variant="outline" className="h-5 px-1.5 text-[10px]">{tag}</Badge>)}
+                    </div>
+                  )}
                   <p className={cn(
-                    'min-h-0 whitespace-pre-wrap leading-relaxed text-foreground',
-                    viewSize === 'compact' ? 'line-clamp-5 pl-6 text-xs' : 'line-clamp-8 pl-7 text-sm'
+                    'mt-2 min-h-0 whitespace-pre-wrap leading-relaxed text-foreground',
+                    viewSize === 'compact' ? 'line-clamp-5 pl-6 text-xs' : 'line-clamp-5 pl-7 text-sm',
+                    viewSize === 'large' && 'line-clamp-7'
                   )}>
                     {asset.content}
                   </p>
+                  {viewSize !== 'compact' && (
+                    <p className="mt-2 line-clamp-2 pl-7 text-xs leading-relaxed text-muted-foreground">
+                      {asset.note || '暂无备注'}
+                    </p>
+                  )}
                   <div className="mt-auto flex justify-end gap-1 pt-2">
                     <Button
                       variant="ghost"
@@ -989,28 +1043,41 @@ export function AssetsWorkspace({ wideMode = false, active = true }: AssetsWorks
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <ImagePlus className="h-4 w-4" />
+              {editingAsset && isTextAsset(editingAsset) ? <FileText className="h-4 w-4" /> : <ImagePlus className="h-4 w-4" />}
               编辑素材
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">名称</label>
-              <Input value={editName} onChange={event => setEditName(event.target.value)} disabled={metadataGenerating} />
+              <label htmlFor="asset-edit-name" className="text-xs font-medium text-muted-foreground">名称</label>
+              <Input id="asset-edit-name" value={editName} onChange={event => setEditName(event.target.value)} disabled={metadataGenerating} />
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">标签</label>
-              <Input value={editTags} onChange={event => setEditTags(event.target.value)} placeholder="用空格或逗号分隔" disabled={metadataGenerating} />
+              <label htmlFor="asset-edit-tags" className="text-xs font-medium text-muted-foreground">标签</label>
+              <Input id="asset-edit-tags" value={editTags} onChange={event => setEditTags(event.target.value)} placeholder="用空格或逗号分隔" disabled={metadataGenerating} />
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">备注</label>
-              <Textarea value={editNote} onChange={event => setEditNote(event.target.value)} rows={4} disabled={metadataGenerating} />
+              <label htmlFor="asset-edit-note" className="text-xs font-medium text-muted-foreground">备注</label>
+              <Textarea id="asset-edit-note" value={editNote} onChange={event => setEditNote(event.target.value)} rows={4} disabled={metadataGenerating} />
             </div>
             {editingAsset && (
               <p className="text-xs text-muted-foreground">
-                来源：{editingAsset.sourceLabel} · {editingAsset.width && editingAsset.height ? `${editingAsset.width}×${editingAsset.height} · ` : ''}{formatAssetSize(editingAsset.sizeBytes)}
+                来源：{editingAsset.sourceLabel} · {!isTextAsset(editingAsset) && editingAsset.width && editingAsset.height ? `${editingAsset.width}×${editingAsset.height} · ` : ''}{formatAssetSize(editingAsset.sizeBytes)}
               </p>
             )}
+            {editingAsset && isTextAsset(editingAsset) && (
+              <div className="space-y-1.5">
+                <label htmlFor="asset-edit-content" className="text-xs font-medium text-muted-foreground">提示词内容</label>
+                <Textarea
+                  id="asset-edit-content"
+                  value={editContent}
+                  onChange={event => setEditContent(event.target.value)}
+                  rows={7}
+                  disabled={metadataGenerating}
+                />
+              </div>
+            )}
+            {editingAsset && !isTextAsset(editingAsset) && (
             <div className="rounded-lg border border-border bg-muted/30 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -1053,6 +1120,7 @@ export function AssetsWorkspace({ wideMode = false, active = true }: AssetsWorks
                 </div>
               )}
             </div>
+            )}
             <div className="flex justify-end gap-2 border-t pt-3">
               <Button
                 variant="outline"
@@ -1081,7 +1149,36 @@ export function AssetsWorkspace({ wideMode = false, active = true }: AssetsWorks
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
+            <div className="space-y-1.5">
+              <label htmlFor="text-asset-name" className="text-xs font-medium text-muted-foreground">名称</label>
+              <Input
+                id="text-asset-name"
+                value={textName}
+                onChange={event => setTextName(event.target.value)}
+                placeholder="可选，留空会用提示词首行"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor="text-asset-tags" className="text-xs font-medium text-muted-foreground">标签</label>
+              <Input
+                id="text-asset-tags"
+                value={textTags}
+                onChange={event => setTextTags(event.target.value)}
+                placeholder="用空格或逗号分隔"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor="text-asset-note" className="text-xs font-medium text-muted-foreground">备注</label>
+              <Input
+                id="text-asset-note"
+                value={textNote}
+                onChange={event => setTextNote(event.target.value)}
+                placeholder="可选"
+              />
+            </div>
+            <label htmlFor="text-asset-content" className="sr-only">提示词内容</label>
             <Textarea
+              id="text-asset-content"
               value={textContent}
               onChange={event => setTextContent(event.target.value)}
               rows={8}
@@ -1092,6 +1189,9 @@ export function AssetsWorkspace({ wideMode = false, active = true }: AssetsWorks
                 variant="outline"
                 onClick={() => {
                   setTextDialogOpen(false);
+                  setTextName('');
+                  setTextTags('');
+                  setTextNote('');
                   setTextContent('');
                 }}
               >

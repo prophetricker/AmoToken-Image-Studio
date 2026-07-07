@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Check, Copy, Download, ImagePlus, Maximize, RefreshCw, RotateCcw, Thermometer, X } from 'lucide-react';
+import { AlertCircle, Check, Copy, Download, ImagePlus, Maximize, RefreshCw, RotateCcw, Save, Thermometer, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -26,6 +26,7 @@ import {
   runImageAction,
   type ImageActionPayload,
 } from '@/lib/image-actions';
+import { addTextAsset } from '@/lib/asset-store';
 
 interface CompletedJobCardProps {
   job: StoredJob;
@@ -116,9 +117,38 @@ function isGptImageLikeModel(model: string): boolean {
   return isGptImageModel(model) || model.includes('gpt-image-2');
 }
 
+function buildPromptAssetContent(job: StoredJob, labels: {
+  mode: string;
+  model: string;
+  outputSize: string;
+  quality: string;
+  style: string;
+  background: string;
+  referenceImageCount: number;
+}): string {
+  const lines = [
+    job.prompt,
+    '',
+    '参数',
+    `模式：${labels.mode}`,
+    `模型：${labels.model}`,
+    `尺寸：${labels.outputSize}`,
+    `比例：${job.aspect_ratio}`,
+    `质量：${labels.quality}`,
+    `风格：${labels.style}`,
+    `背景：${labels.background}`,
+    `数量：${job.parallelCount || job.images?.length || 1}`,
+  ];
+  if (job.mode === 'image-to-image') {
+    lines.splice(lines.length - 1, 0, `参考图：${labels.referenceImageCount || 1}`);
+  }
+  return lines.join('\n');
+}
+
 export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, onRetry, onRetryDownload }: CompletedJobCardProps) {
   const [imgCopied, setImgCopied] = useState(false);
   const [promptCopied, setPromptCopied] = useState(false);
+  const [promptSaved, setPromptSaved] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewImages, setPreviewImages] = useState<string[]>([]);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -275,6 +305,30 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
     setTimeout(() => setPromptCopied(false), 2000);
   };
 
+  const savePromptAsset = async () => {
+    try {
+      await addTextAsset({
+        content: buildPromptAssetContent(job, {
+          mode: getModeLabel(job),
+          model: getModelDisplayName(job.model),
+          outputSize: outputSizeLabel,
+          quality: qualityLabel,
+          style: styleLabel,
+          background: backgroundLabel,
+          referenceImageCount,
+        }),
+        sourceKind: job.mode === 'image-to-image' ? 'image-to-image' : 'text-to-image',
+        sourceLabel: '生图任务提示词',
+        sourceRef: job.id,
+      });
+      setPromptSaved(true);
+      setTimeout(() => setPromptSaved(false), 2000);
+      dispatchImageActionToast('提示词素材已保存', 'success');
+    } catch (error) {
+      dispatchImageActionToast(error instanceof Error ? error.message : '保存提示词素材失败', 'error');
+    }
+  };
+
   const openPreview = async () => {
     const resolved = await resolveImagesAt(sourceImages.map((_, index) => index));
     setPreviewImages(resolved.map(getImageSrc).filter(Boolean));
@@ -368,6 +422,14 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
                 aria-label="复制提示词"
               >
                 {promptCopied ? <Check className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}
+              </button>
+              <button
+                onClick={() => void savePromptAsset()}
+                className="flex-shrink-0 text-muted-foreground transition-colors hover:text-foreground"
+                title="保存提示词素材"
+                aria-label="保存提示词素材"
+              >
+                {promptSaved ? <Check className="w-3.5 h-3.5 text-success" /> : <Save className="w-3.5 h-3.5" />}
               </button>
             </div>
 

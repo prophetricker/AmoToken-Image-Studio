@@ -4,6 +4,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CompletedJobCard } from '@/components/workspace/results/CompletedJobCard';
 import type { StoredJob } from '@/lib/job-store';
 
+const assetStoreMocks = vi.hoisted(() => ({
+  addTextAsset: vi.fn(),
+}));
+
+vi.mock('@/lib/asset-store', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/lib/asset-store')>();
+  return {
+    ...actual,
+    addTextAsset: assetStoreMocks.addTextAsset,
+  };
+});
+
 function makeCompletedJob(overrides: Partial<StoredJob> = {}): StoredJob {
   return {
     id: 'job-1',
@@ -31,6 +43,21 @@ function makeCompletedJob(overrides: Partial<StoredJob> = {}): StoredJob {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks();
+  assetStoreMocks.addTextAsset.mockResolvedValue({
+    id: 'text-asset-1',
+    kind: 'text',
+    hash: 'text-hash-1',
+    name: 'saved prompt',
+    content: 'saved prompt',
+    sizeBytes: 12,
+    tags: [],
+    note: '',
+    sourceKind: 'text-to-image',
+    sourceLabel: '生图任务提示词',
+    createdAt: 1772800000000,
+    updatedAt: 1772800000000,
+  });
   class MockIntersectionObserver {
     observe = vi.fn();
     unobserve = vi.fn();
@@ -135,5 +162,27 @@ describe('CompletedJobCard v0.6 metadata', () => {
 
     expect(screen.getByTestId('completed-job-thumbnail-rail')).toHaveClass('flex-col');
     expect(screen.getAllByAltText(/生成的图像/)).toHaveLength(4);
+  });
+
+  it('saves the completed prompt and generation parameters as a text asset', async () => {
+    render(
+      <CompletedJobCard
+        job={makeCompletedJob()}
+        onClear={vi.fn()}
+        onRetry={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '保存提示词素材' }));
+
+    expect(assetStoreMocks.addTextAsset).toHaveBeenCalledWith(expect.objectContaining({
+      sourceKind: 'text-to-image',
+      sourceLabel: '生图任务提示词',
+      sourceRef: 'job-1',
+    }));
+    expect(assetStoreMocks.addTextAsset.mock.calls[0][0].content).toContain('一只小鲨鱼戴上海盗帽');
+    expect(assetStoreMocks.addTextAsset.mock.calls[0][0].content).toContain('模型：AmoToken GPT Image 2');
+    expect(assetStoreMocks.addTextAsset.mock.calls[0][0].content).toContain('尺寸：2K');
+    expect(assetStoreMocks.addTextAsset.mock.calls[0][0].content).toContain('质量：高');
   });
 });

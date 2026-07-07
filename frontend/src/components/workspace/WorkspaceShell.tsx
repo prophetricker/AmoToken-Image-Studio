@@ -434,10 +434,25 @@ export function WorkspaceShell() {
               {promptGallery.showPromptGallery && (
                 <TabsContent value="prompt-gallery" keepMounted>
                   <div className={cn('bg-transparent p-0 shadow-none sm:rounded-2xl sm:bg-card sm:p-4 sm:shadow-sm sm:border sm:border-border', wideMode && 'sm:p-5')}>
-                    <PromptGallery wideMode={wideMode} />
+                    <PromptGallery
+                      wideMode={wideMode}
+                      onUsePrompt={prompt => {
+                        workspace.setRetryData(null);
+                        setReferenceDraft(null);
+                        setReversePromptDraft({ id: ++reversePromptDraftIdRef.current, prompt });
+                        setActiveTab('image-generation');
+                        showToast('已导入到生图输入框', 'success');
+                      }}
+                    />
                   </div>
                 </TabsContent>
               )}
+
+              <TabsContent value="assets" keepMounted>
+                <div className={cn('bg-transparent p-0 shadow-none sm:rounded-2xl sm:bg-card sm:p-4 sm:shadow-sm sm:border sm:border-border', wideMode && 'sm:p-5')}>
+                  <AssetsWorkspace wideMode={wideMode} active={activeTab === 'assets'} />
+                </div>
+              </TabsContent>
 
               {candidateModesEnabled && (
                 <>
@@ -449,12 +464,6 @@ export function WorkspaceShell() {
                       onError={handleSubmitError}
                       showToast={showToast}
                     />
-                  </TabsContent>
-
-                  <TabsContent value="assets" keepMounted>
-                    <div className={cn('bg-transparent p-0 shadow-none sm:rounded-2xl sm:bg-card sm:p-4 sm:shadow-sm sm:border sm:border-border', wideMode && 'sm:p-5')}>
-                      <AssetsWorkspace wideMode={wideMode} active={activeTab === 'assets'} />
-                    </div>
                   </TabsContent>
 
                   <TabsContent value="canvas" keepMounted className={cn(wideMode && 'xl:flex xl:min-h-0 xl:flex-1 xl:flex-col')}>

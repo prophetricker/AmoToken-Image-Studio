@@ -38,8 +38,11 @@ export interface TextAsset {
   id: string;
   kind: 'text';
   hash: string;
+  name: string;
   content: string;
   sizeBytes: number;
+  tags: string[];
+  note: string;
   sourceKind: AssetSourceKind;
   sourceLabel: string;
   sourceRef?: string;
@@ -81,9 +84,19 @@ export interface UpdateImageAssetInput {
 
 export interface AddTextAssetInput {
   content: string;
+  name?: string;
+  tags?: string[];
+  note?: string;
   sourceKind: AssetSourceKind;
   sourceLabel?: string;
   sourceRef?: string;
+}
+
+export interface UpdateTextAssetInput {
+  content?: string;
+  name?: string;
+  tags?: string[];
+  note?: string;
 }
 
 const DB_NAME = 'nova-assets-db';
@@ -166,6 +179,11 @@ function sanitizeTags(tags?: string[]): string[] {
     if (tag) unique.add(tag);
   }
   return Array.from(unique);
+}
+
+function makeTextAssetName(content: string, createdAt: number): string {
+  const firstLine = content.trim().split(/\r?\n/).find(line => line.trim())?.trim() || '';
+  return firstLine.slice(0, 32) || `提示词-${new Date(createdAt).toLocaleString()}`;
 }
 
 function loadImageFromObjectUrl(url: string): Promise<HTMLImageElement> {
@@ -360,6 +378,9 @@ export async function addTextAsset(input: AddTextAssetInput): Promise<TextAsset>
       ...existing,
       lastUsedAt: createdAt,
       updatedAt: createdAt,
+      name: input.name?.trim() || existing.name || makeTextAssetName(content, existing.createdAt || createdAt),
+      tags: sanitizeTags([...(existing.tags || []), ...(input.tags || [])]),
+      note: input.note?.trim() || existing.note || '',
     };
     await putAssetAndBlob(updated, null);
     return updated;
@@ -369,8 +390,11 @@ export async function addTextAsset(input: AddTextAssetInput): Promise<TextAsset>
     id: makeId('text-asset'),
     kind: 'text',
     hash,
+    name: input.name?.trim() || makeTextAssetName(content, createdAt),
     content,
     sizeBytes: new TextEncoder().encode(content).byteLength,
+    tags: sanitizeTags(input.tags),
+    note: input.note?.trim() || '',
     sourceKind: input.sourceKind,
     sourceLabel: input.sourceLabel || getSourceKindLabel(input.sourceKind),
     sourceRef: input.sourceRef,
@@ -458,6 +482,25 @@ export async function updateImageAsset(assetId: string, input: UpdateImageAssetI
     tags: input.tags ? sanitizeTags(input.tags) : current.tags,
     note: typeof input.note === 'string' ? input.note : current.note,
     updatedAt: now(),
+  };
+  await putAssetAndBlob(updated, null);
+}
+
+export async function updateTextAsset(assetId: string, input: UpdateTextAssetInput): Promise<void> {
+  const current = await getTextAsset(assetId);
+  if (!current) throw new Error('素材不存在');
+  const content = typeof input.content === 'string' ? input.content.trim() : current.content;
+  if (!content) throw new Error('提示词内容不能为空');
+  const updatedAt = now();
+  const updated: TextAsset = {
+    ...current,
+    hash: content === current.content ? current.hash : await hashText(content),
+    name: input.name?.trim() || current.name || makeTextAssetName(content, current.createdAt || updatedAt),
+    content,
+    sizeBytes: new TextEncoder().encode(content).byteLength,
+    tags: input.tags ? sanitizeTags(input.tags) : (current.tags || []),
+    note: typeof input.note === 'string' ? input.note : (current.note || ''),
+    updatedAt,
   };
   await putAssetAndBlob(updated, null);
 }

@@ -21,7 +21,13 @@ import { seededShuffle } from '@/lib/seeded-shuffle';
 const PROMPT_GALLERY_STEP = 20;
 const PROMPT_GALLERY_WIDE_STEP = 30;
 
-const PromptGallery = memo(function PromptGallery({ wideMode = false }: { wideMode?: boolean }) {
+const PromptGallery = memo(function PromptGallery({
+  wideMode = false,
+  onUsePrompt,
+}: {
+  wideMode?: boolean;
+  onUsePrompt?: (prompt: string) => void;
+}) {
   const pageStep = wideMode ? PROMPT_GALLERY_WIDE_STEP : PROMPT_GALLERY_STEP;
   const [allPrompts, setAllPrompts] = useState<PromptWithKey[]>([]);
   const [loading, setLoading] = useState(true);
@@ -231,6 +237,7 @@ const PromptGallery = memo(function PromptGallery({ wideMode = false }: { wideMo
               prompt={prompt}
               onShowDetail={() => handleShowDetail(prompt)}
               onShowImages={(initialIndex) => handleShowImages(prompt, initialIndex)}
+              onUsePrompt={onUsePrompt}
               imageCache={imageCache}
               onImageLoad={handleImageLoad}
             />

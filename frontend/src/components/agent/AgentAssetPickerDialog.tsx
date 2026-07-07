@@ -49,9 +49,12 @@ function matchesTextAsset(asset: TextAsset, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
   return [
+    asset.name || '',
     asset.content,
+    asset.note || '',
     asset.sourceLabel,
     asset.sourceRef || '',
+    (asset.tags || []).join(' '),
   ].some(value => value.toLowerCase().includes(q));
 }
 
@@ -152,7 +155,7 @@ export function AgentTextAssetPickerDialog({
               type="text"
               value={query}
               onChange={event => setQuery(event.target.value)}
-              placeholder="搜索提示词内容、来源"
+              placeholder="搜索名称、标签、备注、提示词"
               className="h-8 w-full rounded-md border border-input bg-background pl-8 pr-8 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
             />
             {query && (
@@ -211,7 +214,16 @@ export function AgentTextAssetPickerDialog({
                       {selected && <Check className="h-3 w-3" />}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <p className="line-clamp-4 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{asset.content}</p>
+                      <p className="truncate text-sm font-medium text-foreground">{asset.name || '提示词素材'}</p>
+                      {(asset.tags || []).length > 0 && (
+                        <div className="mt-1 flex h-5 flex-wrap gap-1 overflow-hidden">
+                          {(asset.tags || []).slice(0, 4).map(tag => <Badge key={tag} variant="outline" className="h-5 px-1.5 text-[10px]">{tag}</Badge>)}
+                        </div>
+                      )}
+                      <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{asset.content}</p>
+                      {asset.note && (
+                        <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">{asset.note}</p>
+                      )}
                     </div>
                   </div>
                 </button>

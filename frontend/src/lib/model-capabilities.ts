@@ -7,6 +7,7 @@ import {
   type ModelId,
 } from '@/lib/gemini-config';
 import { getImageModelById, loadRegistry } from '@/lib/nova-models';
+import { AMOTOKEN_IMAGE_MODEL_ID } from '@/lib/amotoken-image-capabilities';
 import type { AspectRatio, OutputSize, RefImageData, StoredJob } from '@/lib/job-store';
 
 export type ParallelCount = 1 | 2 | 3 | 4;
@@ -378,6 +379,7 @@ export function detectClosestAspectRatio(width: number, height: number, options:
 }
 
 export function getModelDisplayName(model: string): string {
+  if (model === AMOTOKEN_IMAGE_MODEL_ID) return 'AmoToken GPT Image 2';
   return getModelOptions().find(option => option.value === model)?.label || getModelConfig(model)?.name || model;
 }
 
