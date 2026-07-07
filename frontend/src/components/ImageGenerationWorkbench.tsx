@@ -101,7 +101,34 @@ function getSettingsFallback(preferImageSettings: boolean): Partial<WorkbenchSet
   return loadJsonFromStorage<WorkbenchSettings>(preferImageSettings ? T2I_SETTINGS_KEY : I2I_SETTINGS_KEY);
 }
 
+function ImageGenerationTips() {
+  return (
+    <section className="rounded-xl border border-border/70 bg-muted/30 p-4 text-sm">
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <Sparkles className="h-4 w-4" />
+        </div>
+        <div className="min-w-0 space-y-3">
+          <div>
+            <h3 className="text-sm font-medium text-foreground">生图建议</h3>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              复杂画面、角色过多、细节/文字太密、分辨率过高，或提示词触发内容限制时，可能会生成失败。
+            </p>
+          </div>
+          <div className="grid gap-x-4 gap-y-2 text-xs leading-5 text-muted-foreground 2xl:grid-cols-2">
+            <p>先用 1K 或较少角色生成主体，再用单图编辑补服装、表情和背景。</p>
+            <p>多人合照、长剧情、复杂构图可以拆成几张图，最后再做多图融合。</p>
+            <p>同一提示词反复失败时，删掉过密修饰词，保留主体、场景、风格和镜头。</p>
+            <p>失败通常不扣费，最终以爱词元记录为准。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function ImageGenerationWorkbench({
+  wideMode = false,
   onSubmitText,
   onSubmitImage,
   disabled = false,
@@ -747,6 +774,7 @@ export function ImageGenerationWorkbench({
       </div>
 
       {uploadError && <p className="text-sm text-destructive">{uploadError}</p>}
+      {wideMode && !disabled && <ImageGenerationTips />}
       <MissingApiKeyDialog
         open={missingApiKeyDialogOpen}
         onOpenChange={setMissingApiKeyDialogOpen}

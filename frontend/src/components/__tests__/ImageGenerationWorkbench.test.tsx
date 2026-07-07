@@ -77,4 +77,20 @@ describe('ImageGenerationWorkbench AmoToken setup', () => {
 
     expect(screen.getByText(/可能触发内容限制/)).toBeInTheDocument();
   });
+
+  it('shows wide mode generation guidance outside failed cards', async () => {
+    saveAmoTokenToken('sk-test-token');
+    render(
+      <ImageGenerationWorkbench
+        wideMode
+        onSubmitText={vi.fn()}
+        onSubmitImage={vi.fn()}
+        initialData={{ model: AMOTOKEN_IMAGE_MODEL_ID }}
+      />,
+    );
+
+    expect(await screen.findByText('生图建议')).toBeInTheDocument();
+    expect(screen.getByText(/复杂画面、角色过多/)).toBeInTheDocument();
+    expect(screen.getByText(/失败通常不扣费/)).toBeInTheDocument();
+  });
 });

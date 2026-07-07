@@ -14,8 +14,6 @@ import {
   GPT_IMAGE_STYLE_OPTIONS,
 } from '@/lib/model-capabilities';
 import { CompletedJobCard } from '@/components/workspace/results/CompletedJobCard';
-import { getBillingStatusLabel } from '@/lib/image-cost-estimator';
-import { getTaskFailureDisplayInfo, sanitizeUserFacingFailureText } from '@/lib/task-failure';
 
 export type GenerationHistoryFilter = 'all' | 'text-to-image' | 'image-to-image';
 export type HistoryClearScope = GenerationHistoryFilter;
@@ -322,34 +320,23 @@ const FailedJobCard = memo(function FailedJobCard({
   onCheckStatus: (job: StoredJob) => void;
 }) {
   const [copiedPrompt, setCopiedPrompt] = useState(false);
-  const [copiedError, setCopiedError] = useState(false);
-  const display = getTaskFailureDisplayInfo(job.error);
   const allowCheckStatus = !job.terminal && !!job.serverTaskId;
   const outputSizeLabel = job.custom_size || getOutputSizeLabel(job.output_size);
-  const failureStage = sanitizeUserFacingFailureText(job.failureStage || display.stage);
   const promptSummary = summarizeText(job.prompt, 72);
-  const suggestionSummary = summarizeText(display.suggestion, 120);
-  const displayError = sanitizeUserFacingFailureText(job.error);
-  const errorSummary = summarizeText(displayError, 180);
   const qualityLabel = getOptionLabel(GPT_IMAGE_QUALITY_OPTIONS, job.gptImageQuality);
   const styleLabel = getOptionLabel(GPT_IMAGE_STYLE_OPTIONS, job.gptImageStyle);
   const backgroundLabel = getOptionLabel(GPT_IMAGE_BACKGROUND_OPTIONS, job.gptImageBackground);
   const referenceImageCount = getReferenceImageCount(job);
 
-  const copyText = async (text: string | undefined, kind: 'prompt' | 'error') => {
+  const copyPrompt = async () => {
+    const text = job.prompt;
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
-      if (kind === 'prompt') {
-        setCopiedPrompt(true);
-        setTimeout(() => setCopiedPrompt(false), 1500);
-      } else {
-        setCopiedError(true);
-        setTimeout(() => setCopiedError(false), 1500);
-      }
+      setCopiedPrompt(true);
+      setTimeout(() => setCopiedPrompt(false), 1500);
     } catch {
-      if (kind === 'prompt') setCopiedPrompt(false);
-      if (kind === 'error') setCopiedError(false);
+      setCopiedPrompt(false);
     }
   };
 
@@ -368,37 +355,15 @@ const FailedJobCard = memo(function FailedJobCard({
             >
               &quot;{promptSummary}&quot;
             </p>
-            <p className="text-sm font-medium text-destructive">{display.title}</p>
+            <p className="text-sm font-medium text-destructive">生图失败</p>
           </div>
-          <p
-            data-testid="failed-job-suggestion"
-            className="break-words text-sm text-muted-foreground"
-            title={display.suggestion}
-          >
-            {suggestionSummary}
-          </p>
-          <p className="text-xs text-warning">{display.billingNote}</p>
           <div className="flex flex-wrap items-center gap-1.5 text-xs">
             <span className="max-w-full break-words rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{getModeLabel(job)}</span>
             <span className="max-w-full break-words rounded-full bg-muted px-2 py-0.5 text-muted-foreground" title={getModelDisplayName(job.model)}>{getModelDisplayName(job.model)}</span>
             <span className="max-w-full break-words rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{outputSizeLabel}</span>
             <span className="max-w-full break-words rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{job.aspect_ratio}</span>
             <span className="max-w-full break-words rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{formatElapsedTime(job.elapsedMs)}</span>
-            <span className="max-w-full break-words rounded-full bg-destructive/10 px-2 py-0.5 text-destructive" title={`失败阶段：${failureStage}`}>失败阶段：{failureStage}</span>
-            <span className="max-w-full break-words rounded-full bg-warning/10 px-2 py-0.5 text-warning">{getBillingStatusLabel(job.billingStatus)}</span>
           </div>
-          {job.error && (
-            <details className="text-xs text-muted-foreground">
-              <summary className="cursor-pointer select-none text-foreground">错误详情</summary>
-              <p
-                data-testid="failed-job-error-detail"
-                className="mt-1 max-h-28 overflow-y-auto break-words rounded-md bg-muted/40 p-2"
-                title={displayError}
-              >
-                {errorSummary}
-              </p>
-            </details>
-          )}
           <details className="text-xs text-muted-foreground">
             <summary className="cursor-pointer select-none text-foreground">完整参数</summary>
             <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 rounded-md bg-muted/40 p-2 sm:grid-cols-3">
@@ -417,26 +382,13 @@ const FailedJobCard = memo(function FailedJobCard({
               variant="ghost"
               size="sm"
               className="gap-1"
-              onClick={() => void copyText(job.prompt, 'prompt')}
+              onClick={() => void copyPrompt()}
               aria-label="复制完整提示词"
               title="复制完整提示词"
             >
               <Copy className="w-4 h-4" />
               <span>{copiedPrompt ? '已复制提示词' : '复制提示词'}</span>
             </Button>
-            {job.error && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="gap-1"
-                onClick={() => void copyText(displayError, 'error')}
-                aria-label="复制完整错误"
-                title="复制完整错误"
-              >
-                <Copy className="w-4 h-4" />
-                <span>{copiedError ? '已复制错误' : '复制错误'}</span>
-              </Button>
-            )}
             {allowCheckStatus && (
               <Button variant="ghost" size="sm" className="gap-1" onClick={() => onCheckStatus(job)} disabled={isChecking || (cooldownEnd !== undefined && now < cooldownEnd)} aria-label="查看进度">
                 {isChecking

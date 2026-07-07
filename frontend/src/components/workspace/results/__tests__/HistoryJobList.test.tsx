@@ -44,7 +44,7 @@ beforeEach(() => {
 });
 
 describe('HistoryJobList v0.6 task cards', () => {
-  it('keeps failed tasks as explainable cards with retry and billing guidance', () => {
+  it('keeps failed tasks concise with retry and prompt copy actions', () => {
     render(
       <HistoryJobList
         active
@@ -63,29 +63,27 @@ describe('HistoryJobList v0.6 task cards', () => {
     );
 
     expect(screen.getByText('生图失败')).toBeInTheDocument();
-    expect(screen.getByText(/可尝试降低复杂度/)).toBeInTheDocument();
-    expect(screen.getByText(/失败通常不扣费/)).toBeInTheDocument();
-    expect(screen.getByText(/最终以爱词元记录为准/)).toBeInTheDocument();
-    expect(screen.getByText(/失败阶段：生图服务/)).toBeInTheDocument();
     expect(screen.getByText('完整参数')).toBeInTheDocument();
     expect(screen.getByText(/模型：amotoken-gpt-image-2/)).toBeInTheDocument();
     expect(screen.getByText(/质量：自动/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '复制完整提示词' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /重试/ })).toBeInTheDocument();
+    expect(screen.queryByText(/失败阶段/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/爱词元记录/)).not.toBeInTheDocument();
   });
 
-  it('keeps long failed prompts and errors readable with full hover and copy access', () => {
+  it('keeps long failed prompts readable with full hover access', () => {
     const longPrompt = [
       '一个极其复杂的电影级长提示词，包含大量人物、背景、动作、材质、色彩、镜头、光影、情绪和后期细节。',
       '第二行继续描述更多复杂内容，确保卡片内只显示摘要，但悬停时仍能看到完整提示词，方便用户截取复制。',
     ].join('\n');
-    const longError = '网络或超时错误。可稍后重试，或点击查看进度确认服务端任务是否仍在继续。失败不一定代表已扣费，管理员可通过爱词元记录核对。'.repeat(4);
 
     render(
       <HistoryJobList
         active
         title="生图任务"
         mode="text-to-image"
-        jobs={[makeJob({ prompt: longPrompt, error: longError, elapsedMs: 126000 })]}
+        jobs={[makeJob({ prompt: longPrompt, elapsedMs: 126000 })]}
         loadedImages={new Set()}
         checkingJobIds={new Set()}
         cooldowns={new Map()}
@@ -102,15 +100,7 @@ describe('HistoryJobList v0.6 task cards', () => {
     expect(promptSummary.textContent?.length).toBeLessThan(longPrompt.length);
     expect(promptSummary).toHaveClass('break-words');
 
-    const suggestion = screen.getByTestId('failed-job-suggestion');
-    expect(suggestion).toHaveAttribute('title');
-    expect(suggestion).toHaveClass('break-words');
-
-    const errorDetails = screen.getByTestId('failed-job-error-detail');
-    expect(errorDetails).toHaveAttribute('title', longError);
-    expect(errorDetails).toHaveClass('break-words');
-
     expect(screen.getByRole('button', { name: '复制完整提示词' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '复制完整错误' })).toBeInTheDocument();
+    expect(screen.queryByText('错误详情')).not.toBeInTheDocument();
   });
 });
