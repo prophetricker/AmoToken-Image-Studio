@@ -4,29 +4,21 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/workspace/dialogs/ConfirmDialog';
-
-export interface QuickPromptItem {
-  title: string;
-  content: string;
-  type: 1 | 2; // 1=文生图, 2=图生图
-}
+import {
+  fetchQuickPrompts,
+  filterPromptsForMode,
+  getPromptModeLabel,
+  getPromptSummary,
+  type PromptMode,
+  type QuickPromptItem,
+} from '@/lib/quick-prompts';
 
 interface QuickPromptDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  currentMode: 'text-to-image' | 'image-to-image';
+  currentMode: PromptMode;
   currentPrompt: string;
   onSelect: (content: string) => void;
-}
-
-async function fetchPrompts(): Promise<QuickPromptItem[]> {
-  try {
-    const res = await fetch('/api/nova/prompts');
-    if (!res.ok) return [];
-    return await res.json();
-  } catch {
-    return [];
-  }
 }
 
 export function QuickPromptDialog({
@@ -51,7 +43,7 @@ export function QuickPromptDialog({
       setActiveMode(currentMode);
       setOverwriteTarget(null);
     }
-    void fetchPrompts().then(setPrompts);
+    void fetchQuickPrompts().then(setPrompts);
   }, [currentMode, open]);
 
   const handleClose = useCallback(() => {
@@ -79,10 +71,7 @@ export function QuickPromptDialog({
     setOverwriteTarget(null);
   }, []);
 
-  const filteredPrompts = prompts.filter(p => {
-    if (activeMode === 'text-to-image') return p.type === 1;
-    return p.type === 2;
-  });
+  const filteredPrompts = filterPromptsForMode(prompts, activeMode);
 
   if (!open) return null;
 
@@ -130,14 +119,23 @@ export function QuickPromptDialog({
           {filteredPrompts.length === 0 ? (
             <p className="text-sm text-muted-foreground">暂无可用模板</p>
           ) : (
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {filteredPrompts.map((item, index) => (
                 <button
                   key={`${item.title}-${index}`}
                   onClick={() => handleClick(item)}
-                  className="rounded-lg border border-border bg-muted/40 p-3 text-center transition-colors hover:bg-muted hover:text-foreground"
+                  className="min-h-24 rounded-lg border border-border bg-muted/40 p-3 text-left transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label={`使用${item.title}模板`}
                 >
-                  <span className="text-sm font-medium leading-snug">{item.title}</span>
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="min-w-0 truncate text-sm font-medium leading-snug">{item.title}</span>
+                    <span className="shrink-0 rounded-full bg-background px-2 py-0.5 text-[11px] text-muted-foreground">
+                      {getPromptModeLabel(item)}
+                    </span>
+                  </span>
+                  <span className="mt-2 line-clamp-2 block text-xs leading-4 text-muted-foreground">
+                    {getPromptSummary(item.content, 56)}
+                  </span>
                 </button>
               ))}
             </div>

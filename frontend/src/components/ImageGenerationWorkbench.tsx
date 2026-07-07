@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { MissingApiKeyDialog } from '@/components/MissingApiKeyDialog';
 import { QuickPromptDialog } from '@/components/QuickPromptDialog';
+import { SceneTemplateStrip } from '@/components/SceneTemplateStrip';
 import { PromptOptimizeDialog } from '@/components/PromptOptimizeDialog';
 import { AgentAssetPickerDialog, AgentTextAssetPickerDialog } from '@/components/agent/AgentAssetPickerDialog';
 import { GenerationParamsBar, type GenerationParamsValue } from '@/components/GenerationParamsBar';
@@ -718,6 +719,13 @@ export function ImageGenerationWorkbench({
                 />
               </div>
             )}
+
+            <SceneTemplateStrip
+              currentMode={currentMode}
+              currentPrompt={prompt}
+              onSelect={setPrompt}
+              onOpenAll={() => setQuickPromptOpen(true)}
+            />
 
             <Textarea
               ref={textareaRef}

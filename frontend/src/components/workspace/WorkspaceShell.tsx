@@ -7,6 +7,9 @@ import { ImageGenerationWorkbench } from '@/components/ImageGenerationWorkbench'
 import { ReversePromptForm } from '@/components/ReversePromptForm';
 import { AgentChatWorkspace } from '@/components/agent/AgentChatWorkspace';
 import { PromptGallery } from '@/components/PromptGallery';
+import { GifGenerationWorkspace } from '@/components/GifGenerationWorkspace';
+import { AssetsWorkspace } from '@/components/assets/AssetsWorkspace';
+import { CanvasWorkspace } from '@/components/canvas/CanvasWorkspace';
 import { SettingsModal } from '@/components/SettingsModal';
 import { MissingApiKeyDialog } from '@/components/MissingApiKeyDialog';
 import { useQueueStatus } from '@/hooks/useQueueStatus';
@@ -32,6 +35,7 @@ import { Shuffle, Settings, User, Wallpaper, PanelLeftClose, PanelLeftOpen } fro
 import { getNovaTask } from '@/lib/ccode-task-client';
 import { finalizeCompletedServerTask } from '@/lib/workspace-task-service';
 import { classifyTaskFailure } from '@/lib/task-failure';
+import { isCandidateMode, isCandidateModesEnabled } from '@/lib/candidate-capabilities';
 import type { RefImageData, StoredJob } from '@/lib/job-store';
 import { subscribeImageActionToasts, subscribeUseAsImageReference } from '@/lib/image-actions';
 import {
@@ -42,13 +46,15 @@ import {
 import { cn } from '@/lib/utils';
 import { BA_RANDOM_URL, BING_WALLPAPER_URL } from '@/lib/constants';
 
+type WorkspaceTab = 'image-generation' | 'agent' | 'reverse-prompt' | 'prompt-gallery' | 'gif' | 'assets' | 'canvas';
+
 export function WorkspaceShell() {
   const queueStatus = useQueueStatus();
   const { wideMode, toggleWideMode } = useWideMode();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [missingApiKeyDialogOpen, setMissingApiKeyDialogOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'image-generation' | 'agent' | 'reverse-prompt' | 'prompt-gallery'>('image-generation');
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>('image-generation');
   const [generationHistoryFilter, setGenerationHistoryFilter] = useState<GenerationHistoryFilter>('all');
   const [generationClearScope, setGenerationClearScope] = useState<HistoryClearScope | null>(null);
   const [referenceDraft, setReferenceDraft] = useState<{ id: number; refImages: RefImageData[]; prompt?: string } | null>(null);
@@ -56,6 +62,7 @@ export function WorkspaceShell() {
   const workspace = useWorkspaceJobs();
   const galleryConfig = usePromptGalleryConfig();
   const promptGallery = usePromptGalleryAccess(galleryConfig.mode, galleryConfig.passwordEnabled, setError, () => setActiveTab('prompt-gallery'));
+  const candidateModesEnabled = isCandidateModesEnabled();
 
   // Toast state
   const [toasts, setToasts] = useState<ToastData[]>([]);
@@ -207,6 +214,11 @@ export function WorkspaceShell() {
     }
   }, [generationClearScope, workspace]);
 
+  const handleTabChange = useCallback((value: string) => {
+    if (isCandidateMode(value) && !candidateModesEnabled) return;
+    setActiveTab(value as WorkspaceTab);
+  }, [candidateModesEnabled]);
+
   return (
     <div
       className={cn(
@@ -240,7 +252,7 @@ export function WorkspaceShell() {
 
           <Tabs
             value={activeTab}
-            onValueChange={value => setActiveTab(value as typeof activeTab)}
+            onValueChange={handleTabChange}
             orientation={wideMode ? 'vertical' : 'horizontal'}
             className={cn(
               wideMode
@@ -270,7 +282,11 @@ export function WorkspaceShell() {
                 </button>
               )}
               <div className={cn(wideMode ? 'flex flex-col py-4 flex-1' : 'flex flex-col py-1')}>
-                <WorkspaceModeTabs wideMode={wideMode} showPromptGallery={promptGallery.showPromptGallery} />
+                <WorkspaceModeTabs
+                  wideMode={wideMode}
+                  showPromptGallery={promptGallery.showPromptGallery}
+                  showCandidateModes={candidateModesEnabled}
+                />
               </div>
 
               {wideMode && (
@@ -421,6 +437,36 @@ export function WorkspaceShell() {
                     <PromptGallery wideMode={wideMode} />
                   </div>
                 </TabsContent>
+              )}
+
+              {candidateModesEnabled && (
+                <>
+                  <TabsContent value="gif" keepMounted className={cn(wideMode ? 'xl:flex xl:min-h-0 xl:flex-1 xl:flex-col' : 'space-y-4')}>
+                    <GifGenerationWorkspace
+                      wideMode={wideMode}
+                      hasApiKey={workspace.hasApiKey}
+                      onConfigureApiKey={() => setSettingsOpen(true)}
+                      onError={handleSubmitError}
+                      showToast={showToast}
+                    />
+                  </TabsContent>
+
+                  <TabsContent value="assets" keepMounted>
+                    <div className={cn('bg-transparent p-0 shadow-none sm:rounded-2xl sm:bg-card sm:p-4 sm:shadow-sm sm:border sm:border-border', wideMode && 'sm:p-5')}>
+                      <AssetsWorkspace wideMode={wideMode} active={activeTab === 'assets'} />
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="canvas" keepMounted className={cn(wideMode && 'xl:flex xl:min-h-0 xl:flex-1 xl:flex-col')}>
+                    <CanvasWorkspace
+                      wideMode={wideMode}
+                      onConfigureApiKey={() => setSettingsOpen(true)}
+                      onEnableWideMode={toggleWideMode}
+                      showToast={showToast}
+                      showPromptGallery={promptGallery.showPromptGallery}
+                    />
+                  </TabsContent>
+                </>
               )}
             </div>
           </Tabs>
