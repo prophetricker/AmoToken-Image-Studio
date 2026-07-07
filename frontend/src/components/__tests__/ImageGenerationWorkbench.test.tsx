@@ -11,18 +11,8 @@ const quickPrompts = [
     type: 1,
   },
   {
-    title: '概念可视化/知识地图',
-    content: '创建一个解释主题的教育信息图，使用清晰标签和箭头。',
-    type: 1,
-  },
-  {
     title: '图片去水印',
     content: '去除画面中的水印和覆盖文字，自然补全被遮挡区域。',
-    type: 2,
-  },
-  {
-    title: '多图融合',
-    content: '将多张参考图自然融合到同一画面，统一光影、透视和画风。',
     type: 2,
   },
 ] as const;
@@ -46,7 +36,6 @@ describe('ImageGenerationWorkbench AmoToken setup', () => {
   beforeEach(() => {
     localStorage.clear();
     vi.unstubAllGlobals();
-    mockPromptFetch();
     Object.defineProperty(window, 'scrollTo', { value: vi.fn(), writable: true });
     syncDynamicModelExports();
   });
@@ -137,8 +126,9 @@ describe('ImageGenerationWorkbench AmoToken setup', () => {
     expect(screen.getByText(/失败通常不扣费/)).toBeInTheDocument();
   });
 
-  it('shows text-to-image scene templates and applies one into an empty prompt', async () => {
+  it('keeps the main workbench compact without scene template cards', async () => {
     saveAmoTokenToken('sk-test-token');
+    mockPromptFetch();
     render(
       <ImageGenerationWorkbench
         onSubmitText={vi.fn()}
@@ -147,52 +137,9 @@ describe('ImageGenerationWorkbench AmoToken setup', () => {
       />,
     );
 
-    expect(await screen.findByText('场景模板')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /学术论文白板讲解/ })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /图片去水印/ })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /学术论文白板讲解/ }));
-
-    expect(screen.getByPlaceholderText('描述你想要生成的图像...')).toHaveValue(quickPrompts[0].content);
-  });
-
-  it('switches scene templates to image-to-image when reference images exist', async () => {
-    saveAmoTokenToken('sk-test-token');
-    render(
-      <ImageGenerationWorkbench
-        onSubmitText={vi.fn()}
-        onSubmitImage={vi.fn()}
-        initialData={{
-          model: AMOTOKEN_IMAGE_MODEL_ID,
-          refImages: [{ id: 'ref-1', name: 'ref.png', dataUrl: 'data:image/png;base64,abcd', mimeType: 'image/png' }],
-        }}
-      />,
-    );
-
-    expect(await screen.findByRole('button', { name: /图片去水印/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /多图融合/ })).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText('描述你想要生成的图像...')).toBeInTheDocument();
+    expect(screen.queryByText('场景模板')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /学术论文白板讲解/ })).not.toBeInTheDocument();
-  });
-
-  it('asks before a scene template overwrites an existing prompt', async () => {
-    saveAmoTokenToken('sk-test-token');
-    render(
-      <ImageGenerationWorkbench
-        onSubmitText={vi.fn()}
-        onSubmitImage={vi.fn()}
-        initialData={{ model: AMOTOKEN_IMAGE_MODEL_ID, prompt: '已有提示词' }}
-      />,
-    );
-
-    fireEvent.click(await screen.findByRole('button', { name: /学术论文白板讲解/ }));
-
-    expect(screen.getByText('覆盖提示词')).toBeInTheDocument();
-    expect(screen.getByText(/当前输入框已有内容/)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: '覆盖' }));
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText('描述你想要生成的图像...')).toHaveValue(quickPrompts[0].content);
-    });
+    expect(screen.queryByRole('button', { name: /更多/ })).not.toBeInTheDocument();
   });
 });

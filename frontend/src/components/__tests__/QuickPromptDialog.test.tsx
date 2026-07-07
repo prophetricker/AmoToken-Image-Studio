@@ -30,14 +30,14 @@ function mockPromptFetch() {
   }));
 }
 
-describe('QuickPromptDialog v0.7 template experience', () => {
+describe('QuickPromptDialog compact template picker', () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
     mockPromptFetch();
     Object.defineProperty(window, 'scrollTo', { value: vi.fn(), writable: true });
   });
 
-  it('shows template title, mode and short description for the active mode', async () => {
+  it('shows a compact title-only picker for the active mode', async () => {
     render(
       <QuickPromptDialog
         open
@@ -50,7 +50,7 @@ describe('QuickPromptDialog v0.7 template experience', () => {
 
     expect(await screen.findByText('学术论文白板讲解')).toBeInTheDocument();
     expect(screen.getAllByText('文生图').length).toBeGreaterThan(0);
-    expect(screen.getByText(/将论文内容转换为中文教授白板讲解图/)).toBeInTheDocument();
+    expect(screen.queryByText(/将论文内容转换为中文教授白板讲解图/)).not.toBeInTheDocument();
     expect(screen.queryByText('图片去水印')).not.toBeInTheDocument();
   });
 
