@@ -7,6 +7,7 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useImageLazyLoad } from '@/hooks/useImageLazyLoad';
 import { getImageSrc, type StoredJob } from '@/lib/job-store';
+import { isGptImageModel } from '@/lib/gemini-config';
 import { resolveStoredImageRef, revokeBlobUrls } from '@/lib/image-downloader';
 import {
   getModelDisplayName,
@@ -111,6 +112,10 @@ function getOptionLabel<T extends string>(options: { value: T; label: string }[]
   return options.find(option => option.value === value)?.label || value || '自动';
 }
 
+function isGptImageLikeModel(model: string): boolean {
+  return isGptImageModel(model) || model.includes('gpt-image-2');
+}
+
 export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, onRetry, onRetryDownload }: CompletedJobCardProps) {
   const [imgCopied, setImgCopied] = useState(false);
   const [promptCopied, setPromptCopied] = useState(false);
@@ -198,14 +203,16 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
     return resolved.filter((image): image is string => !!image);
   }, [resolveImageAt]);
 
-  const visiblePreviewImages = images.slice(0, 3);
+  const visiblePreviewCount = Math.min(sourceImages.length, 4);
+  const visiblePreviewImages = images.slice(0, visiblePreviewCount);
   const isMultiple = sourceImages.length > 1;
-  const supportsTemperature = !job.model.startsWith('gpt-image-2');
+  const supportsTemperature = !isGptImageLikeModel(job.model);
   const outputSizeLabel = job.custom_size || getOutputSizeLabel(job.output_size);
   const qualityLabel = getOptionLabel(GPT_IMAGE_QUALITY_OPTIONS, job.gptImageQuality);
   const styleLabel = getOptionLabel(GPT_IMAGE_STYLE_OPTIONS, job.gptImageStyle);
   const backgroundLabel = getOptionLabel(GPT_IMAGE_BACKGROUND_OPTIONS, job.gptImageBackground);
   const referenceImageCount = getReferenceImageCount(job);
+  const showAspectInSummary = job.aspect_ratio !== '1:1' && job.aspect_ratio !== 'auto';
   const lazyLoad = useImageLazyLoad<HTMLDivElement>({
     rootMargin: '300px',
     enabled: true,
@@ -276,8 +283,9 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
 
   useEffect(() => {
     if (!lazyLoad.isVisible) return;
-    void resolveImageAt(0);
-  }, [lazyLoad.isVisible, resolveImageAt]);
+    const visibleIndexes = Array.from({ length: visiblePreviewCount }, (_, index) => index);
+    void Promise.all(visibleIndexes.map(index => resolveImageAt(index)));
+  }, [lazyLoad.isVisible, resolveImageAt, visiblePreviewCount]);
 
   if (sourceImages.length === 0) {
     return null;
@@ -289,37 +297,34 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
         <div className="flex h-full items-start gap-3">
           <div
             ref={lazyLoad.elementRef}
-            className="group relative h-14 w-14 flex-shrink-0 overflow-hidden rounded-lg bg-muted"
+            className={`group relative w-14 flex-shrink-0 overflow-hidden ${isMultiple ? 'h-full rounded-md' : 'h-14 rounded-lg bg-muted'}`}
           >
             <button
               type="button"
               onClick={() => void openPreview()}
-              className="absolute inset-0 h-full w-full border-0 p-0"
+              className="h-full w-full border-0 p-0"
               title="看大图"
             >
               {isMultiple ? (
-                <div className="relative h-full w-full">
-                {visiblePreviewImages.map((image, index) => (
-                  <img
-                    key={`${job.id}-${index}`}
-                    src={lazyLoad.isVisible ? (getImageSrc(image) || undefined) : undefined}
-                    alt={`生成的图像 ${index + 1}`}
-                    className={`absolute h-full w-full object-cover transition-all duration-300 ${
-                      loadedImageIndices.has(index) ? 'opacity-100' : 'opacity-0'
-                    }`}
-                    style={{
-                      transform: `rotate(${(index - 1) * 5}deg) translate(${(index - 1) * 2}px, ${(index - 1) * 2}px)`,
-                      zIndex: 3 - index,
-                    }}
-                    onLoad={() => handleImageLoad(index)}
-                  />
-                ))}
-                {!lazyLoad.isLoaded && (
-                  <div className="absolute inset-0 z-10 animate-pulse bg-gradient-to-r from-muted via-muted/50 to-muted" />
-                )}
-                <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
-                  <Maximize className="w-5 h-5 text-white" />
-                </div>
+                <div data-testid="completed-job-thumbnail-rail" className="relative flex h-full w-full flex-col gap-1">
+                  {visiblePreviewImages.map((image, index) => (
+                    <div key={`${job.id}-${index}`} className="relative h-12 w-14 overflow-hidden rounded-md bg-muted">
+                      <img
+                        src={lazyLoad.isVisible ? (getImageSrc(image) || undefined) : undefined}
+                        alt={`生成的图像 ${index + 1}`}
+                        className={`h-full w-full object-cover transition-opacity duration-300 ${
+                          loadedImageIndices.has(index) ? 'opacity-100' : 'opacity-0'
+                        }`}
+                        onLoad={() => handleImageLoad(index)}
+                      />
+                      {!loadedImageIndices.has(index) && (
+                        <div className="absolute inset-0 animate-pulse bg-gradient-to-r from-muted via-muted/50 to-muted" />
+                      )}
+                    </div>
+                  ))}
+                  <div className="absolute inset-0 z-20 flex items-center justify-center rounded-md bg-black/45 opacity-0 transition-opacity group-hover:opacity-100">
+                    <Maximize className="w-5 h-5 text-white" />
+                  </div>
                 </div>
               ) : (
                 <>
@@ -395,7 +400,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
               {getModelDisplayName(job.model)}
               <span>·</span>
               {outputSizeLabel}
-              {job.aspect_ratio !== '1:1' && job.aspect_ratio !== 'auto' && <><span>·</span><span>{job.aspect_ratio}</span></>}
+              {showAspectInSummary && <><span>·</span><span>{job.aspect_ratio}</span></>}
               {supportsTemperature && <><span>·</span><Thermometer className="w-3 h-3" /><span>{job.temperature?.toFixed(2) ?? 1}</span></>}
               {isMultiple && <><span>·</span><span className="font-medium text-primary">x{sourceImages.length}{job.parallelCount && job.parallelCount > sourceImages.length ? `/${job.parallelCount}` : ''}</span></>}
             </p>
@@ -407,19 +412,14 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
               <span className="rounded-full bg-primary/10 px-2 py-0.5 text-primary">{formatCostEstimate(job.costEstimate)}</span>
               <span className="rounded-full bg-warning/10 px-2 py-0.5 text-warning">{getBillingStatusLabel(job.billingStatus)}</span>
             </div>
-            <details className="mt-2 max-h-20 overflow-y-auto text-xs text-muted-foreground">
-              <summary className="cursor-pointer select-none text-foreground">完整参数</summary>
-              <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 rounded-md bg-muted/40 p-2 sm:grid-cols-3">
-                <span>模型：{getModelDisplayName(job.model)}</span>
-                <span>尺寸：{outputSizeLabel}</span>
-                <span>比例：{job.aspect_ratio}</span>
-                <span>质量：{qualityLabel}</span>
-                <span>风格：{styleLabel}</span>
-                <span>背景：{backgroundLabel}</span>
-                {job.mode === 'image-to-image' && <span>参考图：{referenceImageCount || 1}</span>}
-                <span>数量：{job.parallelCount || sourceImages.length || 1}</span>
-              </div>
-            </details>
+            <div className="mt-2 grid max-h-20 grid-cols-2 gap-x-3 gap-y-1 overflow-y-auto rounded-md bg-muted/40 p-2 text-xs text-muted-foreground sm:grid-cols-3">
+              {!showAspectInSummary && <span>比例：{job.aspect_ratio}</span>}
+              <span>质量：{qualityLabel}</span>
+              <span>风格：{styleLabel}</span>
+              <span>背景：{backgroundLabel}</span>
+              {job.mode === 'image-to-image' && <span>参考图：{referenceImageCount || 1}</span>}
+              {!isMultiple && <span>数量：{job.parallelCount || sourceImages.length || 1}</span>}
+            </div>
           </div>
 
           <div className="absolute bottom-4 right-4 flex items-center gap-1">

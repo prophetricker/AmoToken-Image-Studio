@@ -44,7 +44,7 @@ beforeEach(() => {
 });
 
 describe('CompletedJobCard v0.6 metadata', () => {
-  it('shows task thumbnail actions, params, elapsed time, and cost estimate', () => {
+  it('shows task thumbnail actions, deduplicated inline params, elapsed time, and cost estimate', () => {
     render(
       <CompletedJobCard
         job={makeCompletedJob()}
@@ -60,7 +60,15 @@ describe('CompletedJobCard v0.6 metadata', () => {
     expect(screen.getByText('实际扣费待爱词元记录核对')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /复制提示词/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /下载/ })).toBeInTheDocument();
-    expect(screen.getByText('完整参数')).toBeInTheDocument();
+    expect(screen.queryByText('完整参数')).not.toBeInTheDocument();
+    expect(screen.queryByText(/^模型：/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^尺寸：/)).not.toBeInTheDocument();
+    expect(screen.getByText('比例：1:1')).toBeInTheDocument();
+    expect(screen.getByText('质量：高')).toBeInTheDocument();
+    expect(screen.getByText('风格：鲜明')).toBeInTheDocument();
+    expect(screen.getByText('背景：不透明')).toBeInTheDocument();
+    expect(screen.getByText('数量：1')).toBeInTheDocument();
+    expect(screen.queryByText('1.00')).not.toBeInTheDocument();
   });
 
   it('keeps the full prompt available on hover when the visible row is truncated', () => {
@@ -111,5 +119,21 @@ describe('CompletedJobCard v0.6 metadata', () => {
 
     expect(screen.getByText('多图融合')).toBeInTheDocument();
     expect(screen.getByText('参考图：2')).toBeInTheDocument();
+  });
+
+  it('shows four generated images as a vertical thumbnail column', () => {
+    render(
+      <CompletedJobCard
+        job={makeCompletedJob({
+          images: ['image-1', 'image-2', 'image-3', 'image-4'],
+          parallelCount: 4,
+        })}
+        onClear={vi.fn()}
+        onRetry={vi.fn()}
+      />
+    );
+
+    expect(screen.getByTestId('completed-job-thumbnail-rail')).toHaveClass('flex-col');
+    expect(screen.getAllByAltText(/生成的图像/)).toHaveLength(4);
   });
 });

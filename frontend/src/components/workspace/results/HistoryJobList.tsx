@@ -391,19 +391,13 @@ const FailedJobCard = memo(function FailedJobCard({
             <span className="max-w-full break-words rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{job.aspect_ratio}</span>
             <span className="max-w-full break-words rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{formatElapsedTime(job.elapsedMs)}</span>
           </div>
-          <details className="max-h-20 overflow-y-auto text-xs text-muted-foreground">
-            <summary className="cursor-pointer select-none text-foreground">完整参数</summary>
-            <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 rounded-md bg-muted/40 p-2 sm:grid-cols-3">
-              <span className="break-words">模型：{getModelDisplayName(job.model)}</span>
-              <span>尺寸：{outputSizeLabel}</span>
-              <span>比例：{job.aspect_ratio}</span>
-              <span>质量：{qualityLabel}</span>
-              <span>风格：{styleLabel}</span>
-              <span>背景：{backgroundLabel}</span>
-              {job.mode === 'image-to-image' && <span>参考图：{referenceImageCount || 1}</span>}
-              <span>数量：{job.parallelCount || 1}</span>
-            </div>
-          </details>
+          <div className="grid max-h-20 grid-cols-2 gap-x-3 gap-y-1 overflow-y-auto rounded-md bg-muted/40 p-2 text-xs text-muted-foreground sm:grid-cols-3">
+            <span>质量：{qualityLabel}</span>
+            <span>风格：{styleLabel}</span>
+            <span>背景：{backgroundLabel}</span>
+            {job.mode === 'image-to-image' && <span>参考图：{referenceImageCount || 1}</span>}
+            <span>数量：{job.parallelCount || 1}</span>
+          </div>
           <div className="flex min-w-0 flex-wrap gap-1">
             <Button
               variant="ghost"

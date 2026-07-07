@@ -69,9 +69,13 @@ describe('HistoryJobList v0.6 task cards', () => {
     );
 
     expect(screen.getByText('生图失败')).toBeInTheDocument();
-    expect(screen.getByText('完整参数')).toBeInTheDocument();
-    expect(screen.getByText(/模型：amotoken-gpt-image-2/)).toBeInTheDocument();
+    expect(screen.queryByText('完整参数')).not.toBeInTheDocument();
+    expect(screen.queryByText(/^模型：/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^尺寸：/)).not.toBeInTheDocument();
     expect(screen.getByText(/质量：自动/)).toBeInTheDocument();
+    expect(screen.getByText(/风格：自动/)).toBeInTheDocument();
+    expect(screen.getByText(/背景：自动/)).toBeInTheDocument();
+    expect(screen.getByText(/数量：1/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '复制完整提示词' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /重试/ })).toBeInTheDocument();
     expect(screen.queryByText(/失败阶段/)).not.toBeInTheDocument();
