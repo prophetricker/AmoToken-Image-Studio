@@ -70,6 +70,129 @@ export const DEFAULT_CATEGORIES = ['全部', '海报', '角色', '电商', 'UI',
 
 export const ALL_CATEGORY = '全部';
 
+const CATEGORY_ALIASES: Array<[RegExp, string]> = [
+  [/^图像模板/i, '图像模板'],
+  [/^视频模板/i, '视频模板'],
+  [/^(角色肖像|人像|肖像|portrait)/i, '人像/角色'],
+  [/^(3D|三维|手办|材质)/i, '3D/材质'],
+  [/^(产品|电商|商品)/i, '产品/电商'],
+  [/^(UI|界面)/i, 'UI与界面'],
+  [/^(海报|广告|Logo|品牌)/i, '海报/广告'],
+  [/^(动漫|插画)/i, '动漫/插画'],
+  [/^(摄影|食物摄影)/i, '摄影'],
+  [/^(风景|场景|建筑|空间)/i, '场景/空间'],
+  [/^(信息图|文档)/i, '信息图/文档'],
+];
+
+export function normalizePromptCategory(category?: string): string {
+  const value = category?.trim() || '其他';
+  for (const [pattern, label] of CATEGORY_ALIASES) {
+    if (pattern.test(value)) return label;
+  }
+  return value;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isLatinKeyword(keyword: string): boolean {
+  return /^[a-z0-9][a-z0-9 -]*$/i.test(keyword);
+}
+
+function keywordMatchesText(text: string, keyword: string): boolean {
+  const normalized = keyword.trim().toLowerCase();
+  if (!normalized) return false;
+  if (isLatinKeyword(normalized)) {
+    return new RegExp(`(^|[^a-z0-9])${escapeRegExp(normalized)}([^a-z0-9]|$)`, 'i').test(text);
+  }
+  return text.includes(normalized);
+}
+
+export function isPromptBlockedByKeywords(prompt: PromptGalleryItem, keywords: string[]): boolean {
+  const text = [
+    prompt.title,
+    prompt.content,
+    prompt.notes || '',
+  ].join(' ').toLowerCase();
+  return keywords.some(keyword => keywordMatchesText(text, keyword));
+}
+
+export async function fetchPromptBlacklist(): Promise<string[]> {
+  try {
+    const res = await fetch('/api/nova/blacklist', { cache: 'no-store' });
+    if (!res.ok) return [];
+    const data = await res.json() as { keywords?: unknown };
+    return Array.isArray(data.keywords)
+      ? data.keywords.filter((keyword: unknown): keyword is string => typeof keyword === 'string').map(keyword => keyword.toLowerCase())
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export interface PromptGalleryFilterOptions {
+  blacklist?: string[];
+  searchQuery?: string;
+  selectedCategory?: string;
+  includeContributorInSearch?: boolean;
+  includeNotesInSearch?: boolean;
+  includeTagsInSearch?: boolean;
+  includeSourceInSearch?: boolean;
+}
+
+export function promptHasChinese(prompt: Pick<PromptGalleryItem, 'title' | 'content'>): boolean {
+  return /[\u4e00-\u9fa5]/.test(prompt.title) || /[\u4e00-\u9fa5]/.test(prompt.content);
+}
+
+function promptMatchesSearch(prompt: PromptWithKey, query: string, options: PromptGalleryFilterOptions): boolean {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return true;
+
+  const values = [
+    prompt.title,
+    prompt.content,
+  ];
+  if (options.includeContributorInSearch ?? true) values.push(prompt.contributor || '');
+  if (options.includeNotesInSearch) values.push(prompt.notes || '');
+  if (options.includeTagsInSearch) values.push(prompt.tags.join(' '));
+  if (options.includeSourceInSearch) values.push(prompt.source || '');
+
+  return values.some(value => value.toLowerCase().includes(normalizedQuery));
+}
+
+export function filterPromptGalleryPrompts(
+  prompts: PromptWithKey[],
+  options: PromptGalleryFilterOptions = {},
+): PromptWithKey[] {
+  const {
+    blacklist = [],
+    searchQuery = '',
+    selectedCategory = ALL_CATEGORY,
+  } = options;
+
+  return prompts.filter((prompt) => {
+    if (blacklist.length > 0 && isPromptBlockedByKeywords(prompt, blacklist)) return false;
+    if (!promptHasChinese(prompt)) return false;
+    if (selectedCategory !== ALL_CATEGORY && prompt.category !== selectedCategory) return false;
+    return promptMatchesSearch(prompt, searchQuery, options);
+  });
+}
+
+export function getPromptCategories(prompts: Array<Pick<PromptWithKey, 'category'>>): string[] {
+  const categories = Array.from(new Set(
+    prompts
+      .map(prompt => normalizePromptCategory(prompt.category))
+      .filter(category => category && category !== ALL_CATEGORY)
+  )).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+  const priority = ['海报/广告', '人像/角色', '产品/电商', 'UI与界面', '3D/材质', '动漫/插画', '摄影', '场景/空间', '信息图/文档', '图像模板', '视频模板', '其他'];
+  return [
+    ALL_CATEGORY,
+    ...priority.filter(category => categories.includes(category)),
+    ...categories.filter(category => !priority.includes(category)),
+  ];
+}
+
 /** 从 GitHub 来源链接推导展示名（owner/repo），用于来源列表展示 */
 export function getPromptSourceLabel(sourceUrl: string): string {
   return sourceUrl.replace(/^https?:\/\/github\.com\//, '').replace(/\/$/, '');
@@ -79,11 +202,11 @@ export function getPromptSourceLabel(sourceUrl: string): string {
 
 export function inferCategory(title: string, content: string, tags: string[]): string {
   const text = `${title} ${content} ${tags.join(' ')}`.toLowerCase();
-  if (text.includes('海报') || text.includes('poster')) return '海报';
-  if (text.includes('角色') || text.includes('character') || text.includes('oc')) return '角色';
-  if (text.includes('电商') || text.includes('商品') || text.includes('product')) return '电商';
+  if (text.includes('海报') || text.includes('poster')) return '海报/广告';
+  if (text.includes('角色') || text.includes('character') || text.includes('oc')) return '人像/角色';
+  if (text.includes('电商') || text.includes('商品') || text.includes('product')) return '产品/电商';
   if (text.includes('ui') || text.includes('界面') || text.includes('设计')) return 'UI';
-  if (text.includes('风格') || text.includes('转换') || text.includes('style')) return '风格转换';
+  if (text.includes('风格') || text.includes('转换') || text.includes('style')) return '创意转换';
   if (text.includes('gpt4o')) return 'gpt4o';
   if (text.includes('gpt-image-2')) return 'gpt-image-2';
   return '其他';
@@ -413,9 +536,10 @@ function normalizeServerPrompt(raw: unknown, index: number): PromptWithKey | nul
   const content = typeof item.content === 'string' ? item.content.trim() : '';
   if (!title || !content) return null;
   const tags = Array.isArray(item.tags) ? item.tags.filter((tag): tag is string => typeof tag === 'string') : [];
-  const category = typeof item.category === 'string' && item.category.trim()
+  const rawCategory = typeof item.category === 'string' && item.category.trim()
     ? item.category.trim()
     : inferCategory(title, content, tags);
+  const category = normalizePromptCategory(rawCategory);
   const source = typeof item.source === 'string' && item.source.trim() ? item.source.trim() : 'server';
   const id = typeof item.id === 'string' && item.id.trim() ? item.id.trim() : `server-${index}`;
   return {
@@ -450,11 +574,7 @@ function normalizeServerPromptData(data: unknown): PromptWithKey[] {
 }
 
 function categoriesFromPrompts(prompts: PromptWithKey[]): string[] {
-  const categorySet = new Set<string>(DEFAULT_CATEGORIES.filter(c => c !== ALL_CATEGORY));
-  for (const prompt of prompts) {
-    if (prompt.category) categorySet.add(prompt.category);
-  }
-  return [ALL_CATEGORY, ...Array.from(categorySet)];
+  return getPromptCategories(prompts);
 }
 
 export async function fetchAllPromptSources(): Promise<FetchResult> {
@@ -462,21 +582,20 @@ export async function fetchAllPromptSources(): Promise<FetchResult> {
     PROMPT_DATA_SOURCES.map(source => fetchSource(source))
   );
 
-  const categorySet = new Set<string>(DEFAULT_CATEGORIES.filter(c => c !== ALL_CATEGORY));
   const prompts: PromptWithKey[] = [];
 
   for (const result of settled) {
     if (result.status === 'fulfilled') {
       for (const p of result.value) {
-        if (p.category) categorySet.add(p.category);
-        prompts.push(p);
+        const normalizedPrompt = { ...p, category: normalizePromptCategory(p.category) };
+        prompts.push(normalizedPrompt);
       }
     }
   }
 
   return {
     prompts,
-    categories: [ALL_CATEGORY, ...Array.from(categorySet)],
+    categories: getPromptCategories(prompts),
   };
 }
 

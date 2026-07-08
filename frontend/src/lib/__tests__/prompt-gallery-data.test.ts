@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ALL_CATEGORY, fetchStablePromptGallery, type FetchResult } from '@/lib/prompt-gallery-data';
+import {
+  ALL_CATEGORY,
+  fetchStablePromptGallery,
+  filterPromptGalleryPrompts,
+  getPromptCategories,
+  isPromptBlockedByKeywords,
+  normalizePromptCategory,
+  type FetchResult,
+} from '@/lib/prompt-gallery-data';
 
 const serverPrompt = {
   id: 'server-1',
@@ -65,5 +73,54 @@ describe('fetchStablePromptGallery', () => {
 
     expect(fallback).toHaveBeenCalledTimes(1);
     expect(result.prompts[0].title).toBe('Fallback prompt');
+  });
+});
+
+describe('prompt gallery filtering helpers', () => {
+  it('does not match short latin blacklist words inside safe words or metadata', () => {
+    expect(isPromptBlockedByKeywords({
+      ...serverPrompt,
+      title: 'Brand portrait poster',
+      content: 'A polished product brand image with portrait lighting.',
+      tags: ['portrait', 'brand'],
+      contributor: '@berryxia_ai',
+    }, ['bra', 'tor', 'xi'])).toBe(false);
+
+    expect(isPromptBlockedByKeywords({
+      ...serverPrompt,
+      title: 'Unsafe exact word',
+      content: 'This prompt mentions bra as a standalone word.',
+    }, ['bra'])).toBe(true);
+  });
+
+  it('normalizes long-tail categories and only returns categories with prompts', () => {
+    expect(normalizePromptCategory('图像模板 - 产品海报')).toBe('图像模板');
+    expect(normalizePromptCategory('视频模板 - 动画')).toBe('视频模板');
+    expect(normalizePromptCategory('角色肖像')).toBe('人像/角色');
+
+    const categories = getPromptCategories([
+      { ...serverPrompt, category: '图像模板 - 产品海报', uniqueKey: 'a' },
+      { ...serverPrompt, category: '视频模板 - 动画', uniqueKey: 'b' },
+      { ...serverPrompt, category: '角色肖像', uniqueKey: 'c' },
+    ]);
+
+    expect(categories).toEqual([ALL_CATEGORY, '人像/角色', '图像模板', '视频模板']);
+  });
+
+  it('filters prompts consistently before building visible category chips', () => {
+    const prompts = [
+      { ...serverPrompt, title: 'Brand portrait poster', content: '产品海报提示词', category: '海报/广告', uniqueKey: 'a' },
+      { ...serverPrompt, title: 'English only prompt', content: 'No Chinese text here.', category: '产品/电商', uniqueKey: 'b' },
+      { ...serverPrompt, title: 'Exact unsafe word', content: '这里包含 bra 作为独立词', category: '人像/角色', uniqueKey: 'c' },
+    ];
+
+    const filtered = filterPromptGalleryPrompts(prompts, {
+      blacklist: ['bra', 'tor', 'xi'],
+      searchQuery: '',
+      selectedCategory: ALL_CATEGORY,
+    });
+
+    expect(filtered.map(prompt => prompt.uniqueKey)).toEqual(['a']);
+    expect(getPromptCategories(filtered)).toEqual([ALL_CATEGORY, '海报/广告']);
   });
 });

@@ -9,9 +9,11 @@ import {
 } from '@/components/prompt-gallery/PromptGallerySubcomponents';
 import {
   ALL_CATEGORY,
-  DEFAULT_CATEGORIES,
   PROMPT_DATA_SOURCES,
+  fetchPromptBlacklist,
   fetchStablePromptGallery,
+  filterPromptGalleryPrompts,
+  getPromptCategories,
   getPromptSourceLabel,
   type PromptWithKey,
 } from '@/lib/prompt-gallery-data';
@@ -35,7 +37,6 @@ const PromptGallery = memo(function PromptGallery({
   const [searchQuery, setSearchQuery] = useState('');
   const [blacklist, setBlacklist] = useState<string[]>([]);
   const [selectedCategory, setSelectedCategory] = useState(ALL_CATEGORY);
-  const [categories, setCategories] = useState<string[]>(DEFAULT_CATEGORIES);
   const [detailPrompt, setDetailPrompt] = useState<PromptWithKey | null>(null);
   const [imagePreview, setImagePreview] = useState<{ prompt: PromptWithKey; initialIndex: number } | null>(null);
   const [imageCache, setImageCache] = useState<Set<string>>(new Set());
@@ -44,20 +45,10 @@ const PromptGallery = memo(function PromptGallery({
   const loadMoreRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fetch('/api/nova/blacklist')
-      .then((res) => res.json())
-      .then((data) => {
-        if (Array.isArray(data.keywords)) {
-          setBlacklist(data.keywords.map((keyword: string) => keyword.toLowerCase()));
-        }
-      })
-      .catch(() => {
-        setBlacklist([]);
-      });
+    fetchPromptBlacklist().then(setBlacklist);
 
     fetchStablePromptGallery()
       .then((result) => {
-        setCategories(result.categories);
         setAllPrompts(result.prompts);
         setLoading(false);
       })
@@ -85,40 +76,18 @@ const PromptGallery = memo(function PromptGallery({
   }, []);
 
   const baseFilteredPrompts = useMemo(() => {
-    let prompts = allPrompts;
-
-    if (blacklist.length > 0) {
-      prompts = prompts.filter((prompt) => {
-        const contentToCheck = [
-          prompt.title.toLowerCase(),
-          prompt.content.toLowerCase(),
-          prompt.contributor?.toLowerCase() || '',
-          prompt.notes?.toLowerCase() || '',
-          ...prompt.tags.map((tag) => tag.toLowerCase()),
-        ].join(' ');
-
-        return !blacklist.some((keyword) => contentToCheck.includes(keyword));
-      });
-    }
-
-    const hasChinese = (text: string) => /[\u4e00-\u9fa5]/.test(text);
-    prompts = prompts.filter((prompt) => hasChinese(prompt.title) || hasChinese(prompt.content));
-
-    if (selectedCategory !== ALL_CATEGORY) {
-      prompts = prompts.filter((prompt) => prompt.category === selectedCategory);
-    }
-
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      prompts = prompts.filter((prompt) => (
-        prompt.title.toLowerCase().includes(query)
-        || prompt.content.toLowerCase().includes(query)
-        || (prompt.contributor && prompt.contributor.toLowerCase().includes(query))
-      ));
-    }
-
-    return prompts;
+    return filterPromptGalleryPrompts(allPrompts, { blacklist, searchQuery, selectedCategory });
   }, [allPrompts, blacklist, searchQuery, selectedCategory]);
+
+  const visibleCategories = useMemo(() => {
+    return getPromptCategories(filterPromptGalleryPrompts(allPrompts, { blacklist, searchQuery }));
+  }, [allPrompts, blacklist, searchQuery]);
+
+  useEffect(() => {
+    if (selectedCategory !== ALL_CATEGORY && !visibleCategories.includes(selectedCategory)) {
+      queueMicrotask(() => setSelectedCategory(ALL_CATEGORY));
+    }
+  }, [selectedCategory, visibleCategories]);
 
   const filteredPrompts = useMemo(() => {
     const seed = `${searchQuery}\0${blacklist.join('\0')}\0${baseFilteredPrompts.map((prompt) => prompt.uniqueKey).join('\0')}`;
@@ -188,7 +157,7 @@ const PromptGallery = memo(function PromptGallery({
           </div>
 
           <div className="flex flex-wrap gap-2">
-            {categories.map((category) => (
+            {visibleCategories.map((category) => (
               <Badge
                 key={category}
                 variant={selectedCategory === category ? 'default' : 'secondary'}

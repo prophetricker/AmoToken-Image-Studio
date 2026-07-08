@@ -6,7 +6,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { fetchStablePromptGallery, DEFAULT_CATEGORIES, ALL_CATEGORY, type PromptWithKey } from '@/lib/prompt-gallery-data';
+import {
+  ALL_CATEGORY,
+  fetchPromptBlacklist,
+  fetchStablePromptGallery,
+  filterPromptGalleryPrompts,
+  getPromptCategories,
+  type PromptWithKey,
+} from '@/lib/prompt-gallery-data';
 
 const PAGE_SIZE = 12;
 
@@ -25,7 +32,7 @@ export const PromptSelectDialog = memo(function PromptSelectDialog({
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState(ALL_CATEGORY);
-  const [categories, setCategories] = useState<string[]>(DEFAULT_CATEGORIES);
+  const [blacklist, setBlacklist] = useState<string[]>([]);
   const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
   const loadMoreRef = useRef<HTMLDivElement>(null);
 
@@ -33,10 +40,10 @@ export const PromptSelectDialog = memo(function PromptSelectDialog({
     if (!open) return;
 
     setLoading(true);
-    fetchStablePromptGallery()
-      .then(result => {
-        setCategories(result.categories);
+    Promise.all([fetchStablePromptGallery(), fetchPromptBlacklist()])
+      .then(([result, blacklistKeywords]) => {
         setAllPrompts(result.prompts);
+        setBlacklist(blacklistKeywords);
         setLoading(false);
       })
       .catch(() => {
@@ -52,26 +59,28 @@ export const PromptSelectDialog = memo(function PromptSelectDialog({
     }
   }, [open]);
 
+  const visibleCategories = useMemo(() => {
+    return getPromptCategories(filterPromptGalleryPrompts(allPrompts, {
+      blacklist,
+      searchQuery,
+      includeContributorInSearch: false,
+    }));
+  }, [allPrompts, blacklist, searchQuery]);
+
+  useEffect(() => {
+    if (selectedCategory !== ALL_CATEGORY && !visibleCategories.includes(selectedCategory)) {
+      queueMicrotask(() => setSelectedCategory(ALL_CATEGORY));
+    }
+  }, [selectedCategory, visibleCategories]);
+
   const filteredPrompts = useMemo(() => {
-    let prompts = allPrompts;
-
-    const hasChinese = (text: string) => /[\u4e00-\u9fa5]/.test(text);
-    prompts = prompts.filter(p => hasChinese(p.title) || hasChinese(p.content));
-
-    if (selectedCategory !== ALL_CATEGORY) {
-      prompts = prompts.filter(p => p.category === selectedCategory);
-    }
-
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      prompts = prompts.filter(p =>
-        p.title.toLowerCase().includes(query) ||
-        p.content.toLowerCase().includes(query)
-      );
-    }
-
-    return prompts;
-  }, [allPrompts, searchQuery, selectedCategory]);
+    return filterPromptGalleryPrompts(allPrompts, {
+      blacklist,
+      searchQuery,
+      selectedCategory,
+      includeContributorInSearch: false,
+    });
+  }, [allPrompts, blacklist, searchQuery, selectedCategory]);
 
   const displayedPrompts = useMemo(() => {
     return filteredPrompts.slice(0, displayCount);
@@ -125,7 +134,7 @@ export const PromptSelectDialog = memo(function PromptSelectDialog({
           </div>
 
           <div className="flex flex-wrap gap-2">
-            {categories.map(category => (
+            {visibleCategories.map(category => (
               <Badge
                 key={category}
                 variant={selectedCategory === category ? 'default' : 'secondary'}

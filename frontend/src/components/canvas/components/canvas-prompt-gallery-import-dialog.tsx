@@ -7,7 +7,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { ALL_CATEGORY, DEFAULT_CATEGORIES, PROMPT_DATA_SOURCES, fetchStablePromptGallery, getPromptSourceLabel, type PromptWithKey } from "@/lib/prompt-gallery-data";
+import {
+  ALL_CATEGORY,
+  PROMPT_DATA_SOURCES,
+  fetchPromptBlacklist,
+  fetchStablePromptGallery,
+  filterPromptGalleryPrompts,
+  getPromptCategories,
+  getPromptSourceLabel,
+  type PromptWithKey,
+} from "@/lib/prompt-gallery-data";
 import { cn } from "@/lib/utils";
 
 type CanvasPromptGalleryImportDialogProps = {
@@ -32,49 +41,8 @@ async function loadPromptGalleryData() {
   return { ...cachedPromptData, blacklist: cachedBlacklist };
 }
 
-async function fetchPromptBlacklist(): Promise<string[]> {
-  try {
-    const response = await fetch("/api/nova/blacklist");
-    if (!response.ok) return [];
-    const data = await response.json();
-    return Array.isArray(data.keywords) ? data.keywords.map((keyword: string) => keyword.toLowerCase()) : [];
-  } catch {
-    return [];
-  }
-}
-
-function hasChinese(value: string) {
-  return /[\u4e00-\u9fa5]/.test(value);
-}
-
-function isBlacklisted(prompt: PromptWithKey, blacklist: string[]) {
-  if (!blacklist.length) return false;
-  const content = [
-    prompt.title,
-    prompt.content,
-    prompt.contributor || "",
-    prompt.notes || "",
-    prompt.tags.join(" "),
-  ].join(" ").toLowerCase();
-  return blacklist.some((keyword) => content.includes(keyword));
-}
-
-function matchesPrompt(prompt: PromptWithKey, query: string) {
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
-  return [
-    prompt.title,
-    prompt.content,
-    prompt.contributor || "",
-    prompt.notes || "",
-    prompt.tags.join(" "),
-    prompt.source || "",
-  ].some((value) => value.toLowerCase().includes(q));
-}
-
 export function CanvasPromptGalleryImportDialog({ open, importing, onOpenChange, onConfirm }: CanvasPromptGalleryImportDialogProps) {
   const [prompts, setPrompts] = useState<PromptWithKey[]>([]);
-  const [categories, setCategories] = useState<string[]>(DEFAULT_CATEGORIES);
   const [blacklist, setBlacklist] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -104,7 +72,6 @@ export function CanvasPromptGalleryImportDialog({ open, importing, onOpenChange,
       void loadPromptGalleryData()
         .then((data) => {
           setPrompts(data.prompts);
-          setCategories(data.categories);
           setBlacklist(data.blacklist);
         })
         .catch((err) => {
@@ -116,12 +83,30 @@ export function CanvasPromptGalleryImportDialog({ open, importing, onOpenChange,
     }
   }, [open]);
 
+  const visibleCategories = useMemo(() => {
+    return getPromptCategories(filterPromptGalleryPrompts(prompts, {
+      blacklist,
+      searchQuery: query,
+      includeNotesInSearch: true,
+      includeTagsInSearch: true,
+      includeSourceInSearch: true,
+    }));
+  }, [blacklist, prompts, query]);
+
+  useEffect(() => {
+    if (selectedCategory !== ALL_CATEGORY && !visibleCategories.includes(selectedCategory)) {
+      queueMicrotask(() => setSelectedCategory(ALL_CATEGORY));
+    }
+  }, [selectedCategory, visibleCategories]);
+
   const filteredPrompts = useMemo(() => {
-    return prompts.filter((prompt) => {
-      if (isBlacklisted(prompt, blacklist)) return false;
-      if (!hasChinese(prompt.title) && !hasChinese(prompt.content)) return false;
-      if (selectedCategory !== ALL_CATEGORY && prompt.category !== selectedCategory) return false;
-      return matchesPrompt(prompt, query);
+    return filterPromptGalleryPrompts(prompts, {
+      blacklist,
+      searchQuery: query,
+      selectedCategory,
+      includeNotesInSearch: true,
+      includeTagsInSearch: true,
+      includeSourceInSearch: true,
     });
   }, [blacklist, prompts, query, selectedCategory]);
 
@@ -200,7 +185,7 @@ export function CanvasPromptGalleryImportDialog({ open, importing, onOpenChange,
         </div>
 
         <div className="flex max-h-24 min-h-11 flex-wrap items-start gap-1.5 overflow-y-auto border-b py-1.5 pr-1 select-none overscroll-contain">
-          {categories.map((category) => (
+          {visibleCategories.map((category) => (
             <button
               key={category}
               type="button"
