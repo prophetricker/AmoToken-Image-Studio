@@ -1,6 +1,6 @@
 'use client';
 
-import { addImageAsset, findImageAssetByBlob, getAssetBlob, getAssetFileExtension, touchImageAsset, type AssetSourceKind, type ImageAsset } from '@/lib/asset-store';
+import { addImageAsset, findImageAssetsByBlob, getAssetBlob, getAssetFileExtension, touchImageAsset, type AssetSourceKind, type ImageAsset } from '@/lib/asset-store';
 import { getAgentImageBytes } from '@/lib/agent-context-store';
 import { getImageSrc, type RefImageData } from '@/lib/job-store';
 import { getStoredBlob } from '@/lib/image-downloader';
@@ -36,6 +36,25 @@ export interface ImageActionToastDetail {
 export interface UseAsImageReferenceDetail {
   refImages: RefImageData[];
   prompt?: string;
+}
+
+export interface AddToAssetsActionResult {
+  action: 'add-to-assets';
+  asset: ImageAsset;
+  alreadyExists: boolean;
+}
+
+export function getImageActionPayloadKey(payload: ImageActionPayload): string {
+  const sourceRef = payload.sourceRef
+    || payload.id
+    || payload.assetId
+    || payload.agentImageId
+    || (payload.storedRef ? `${payload.storedRef.jobId}:${payload.storedRef.imageIndex}:${payload.storedRef.imageRef}` : '')
+    || payload.src
+    || payload.dataUrl?.slice(0, 96)
+    || payload.name
+    || 'image';
+  return `${payload.sourceKind}:${sourceRef}`;
 }
 
 const TOAST_EVENT = 'nova-image-action-toast';
@@ -224,17 +243,22 @@ export async function copyImagePayload(payload: ImageActionPayload): Promise<voi
 
 export async function addImagePayloadToAssets(payload: ImageActionPayload): Promise<{ asset: ImageAsset; alreadyExists: boolean }> {
   const blob = await resolveImagePayloadToBlob(payload);
-  const existingAsset = await findImageAssetByBlob(blob);
-  if (existingAsset) {
-    await touchImageAsset(existingAsset.id);
-    return { asset: existingAsset, alreadyExists: true };
+  const sourceRef = payload.sourceRef || payload.id || payload.assetId || payload.agentImageId;
+  const sameUneditedSource = (await findImageAssetsByBlob(blob)).find(asset =>
+    !asset.metadataEditedAt
+    && asset.sourceKind === payload.sourceKind
+    && (asset.sourceRef || '') === (sourceRef || '')
+  );
+  if (sameUneditedSource) {
+    await touchImageAsset(sameUneditedSource.id);
+    return { asset: sameUneditedSource, alreadyExists: true };
   }
   const asset = await addImageAsset({
     blob,
     name: payload.name,
     sourceKind: payload.sourceKind,
     sourceLabel: payload.sourceLabel,
-    sourceRef: payload.sourceRef || payload.id || payload.assetId || payload.agentImageId,
+    sourceRef,
     prompt: payload.prompt,
     note: payload.note,
   });
@@ -297,7 +321,7 @@ export async function applyAnnotatedImageAsReference(
 export async function runImageAction(
   action: 'download' | 'copy' | 'add-to-assets' | 'use-as-reference',
   payload: ImageActionPayload,
-): Promise<void> {
+): Promise<AddToAssetsActionResult | void> {
   try {
     if (action === 'download') {
       await downloadImagePayload(payload);
@@ -312,7 +336,7 @@ export async function runImageAction(
     if (action === 'add-to-assets') {
       const result = await addImagePayloadToAssets(payload);
       dispatchImageActionToast(result.alreadyExists ? '素材库已包含此图片' : '已添加到素材库', result.alreadyExists ? 'info' : 'success');
-      return;
+      return { action: 'add-to-assets', ...result };
     }
     await applyImagePayloadAsReference(payload);
     dispatchImageActionToast('已添加为图生图参考', 'success');

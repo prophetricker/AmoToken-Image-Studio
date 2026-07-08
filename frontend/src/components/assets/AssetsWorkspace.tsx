@@ -17,6 +17,7 @@ import {
   Pencil,
   Search,
   Sparkles,
+  Tag,
   Trash2,
   Upload,
   Wand2,
@@ -284,6 +285,9 @@ export function AssetsWorkspace({ wideMode = false, active = true }: AssetsWorks
   const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
   const [packing, setPacking] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkTagOpen, setBulkTagOpen] = useState(false);
+  const [bulkTags, setBulkTags] = useState('');
+  const [bulkTagUpdating, setBulkTagUpdating] = useState(false);
   const [sourcePopoverOpen, setSourcePopoverOpen] = useState(false);
   const [sortPopoverOpen, setSortPopoverOpen] = useState(false);
   const [metadataGenerating, setMetadataGenerating] = useState(false);
@@ -371,6 +375,7 @@ export function AssetsWorkspace({ wideMode = false, active = true }: AssetsWorks
     return total;
   }, [assets]);
   const selectedCount = selectedAssetIds.size;
+  const selectedAssets = useMemo(() => assets.filter(asset => selectedAssetIds.has(asset.id)), [assets, selectedAssetIds]);
   const allVisibleSelected = visibleAssets.length > 0 && visibleAssets.every(asset => selectedAssetIds.has(asset.id));
   const selectedSourceLabel = selectedSource ? getSourceKindLabel(selectedSource as AssetSourceKind) : '全部来源';
   const sortLabel = SORT_OPTIONS.find(option => option.value === sort)?.label || '最新添加';
@@ -597,6 +602,44 @@ export function AssetsWorkspace({ wideMode = false, active = true }: AssetsWorks
     }
   }, [assets, packing, selectedAssetIds]);
 
+  const updateSelectedTags = useCallback(async (mode: 'add' | 'remove-active') => {
+    if (selectedAssets.length === 0 || bulkTagUpdating) return;
+    const tagsToAdd = splitTags(bulkTags);
+    if (mode === 'add' && tagsToAdd.length === 0) {
+      dispatchImageActionToast('\u8bf7\u8f93\u5165\u8981\u6dfb\u52a0\u7684\u6807\u7b7e', 'info');
+      return;
+    }
+    if (mode === 'remove-active' && !selectedTag) return;
+
+    setBulkTagUpdating(true);
+    try {
+      let updatedCount = 0;
+      for (const asset of selectedAssets) {
+        const currentTags = asset.tags || [];
+        const nextTags = mode === 'add'
+          ? Array.from(new Set([...currentTags, ...tagsToAdd]))
+          : currentTags.filter(tag => tag !== selectedTag);
+        if (nextTags.length === currentTags.length && nextTags.every((tag, index) => tag === currentTags[index])) {
+          continue;
+        }
+        if (isTextAsset(asset)) {
+          await updateTextAsset(asset.id, { tags: nextTags });
+        } else {
+          await updateImageAsset(asset.id, { tags: nextTags });
+        }
+        updatedCount++;
+      }
+      await reload();
+      setBulkTags('');
+      setBulkTagOpen(false);
+      dispatchImageActionToast(`\u5df2\u66f4\u65b0 ${updatedCount} \u9879\u7d20\u6750\u6807\u7b7e`, 'success');
+    } catch (error) {
+      dispatchImageActionToast(error instanceof Error ? error.message : '\u6279\u91cf\u66f4\u65b0\u6807\u7b7e\u5931\u8d25', 'error');
+    } finally {
+      setBulkTagUpdating(false);
+    }
+  }, [bulkTags, bulkTagUpdating, reload, selectedAssets, selectedTag]);
+
   const generateEditMetadata = useCallback(async () => {
     if (!editingAsset || isTextAsset(editingAsset) || metadataGenerating) return;
     let textModel;
@@ -821,6 +864,7 @@ export function AssetsWorkspace({ wideMode = false, active = true }: AssetsWorks
           >
             <button
               type="button"
+              aria-label="clear tag filter"
               onClick={() => setSelectedTag('')}
               className={cn('inline-flex min-h-7 shrink-0 items-center whitespace-nowrap rounded-full border px-2.5 text-xs leading-tight transition-colors', !selectedTag ? 'border-primary bg-primary text-primary-foreground' : 'border-border hover:bg-muted')}
             >
@@ -830,6 +874,7 @@ export function AssetsWorkspace({ wideMode = false, active = true }: AssetsWorks
               <button
                 key={tag}
                 type="button"
+                aria-label={`filter tag ${tag}`}
                 onClick={() => setSelectedTag(tag)}
                 className={cn('inline-flex min-h-7 shrink-0 items-center whitespace-nowrap rounded-full border px-2.5 text-xs leading-tight transition-colors', selectedTag === tag ? 'border-primary bg-primary text-primary-foreground' : 'border-border hover:bg-muted')}
               >
@@ -841,14 +886,62 @@ export function AssetsWorkspace({ wideMode = false, active = true }: AssetsWorks
       </div>
 
       {visibleAssets.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <Button variant="outline" size="sm" onClick={toggleSelectVisible} className="gap-1.5">
-            <Check className="h-3.5 w-3.5" />
-            {allVisibleSelected ? '取消选择当前页' : '选择当前页'}
-          </Button>
-          <span className="text-xs text-muted-foreground">
-            已选择 {selectedCount} 项
-          </span>
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" size="sm" onClick={toggleSelectVisible} className="gap-1.5">
+                <Check className="h-3.5 w-3.5" />
+                {allVisibleSelected ? '取消选择当前页' : '选择当前页'}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label="bulk asset tags"
+                onClick={() => setBulkTagOpen(open => !open)}
+                disabled={selectedCount === 0 || bulkTagUpdating}
+                className="gap-1.5"
+              >
+                {bulkTagUpdating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Tag className="h-3.5 w-3.5" />}
+                标签
+              </Button>
+            </div>
+            <span className="text-xs text-muted-foreground">
+              已选择 {selectedCount} 项
+            </span>
+          </div>
+          {bulkTagOpen && selectedCount > 0 && (
+            <div className="flex flex-col gap-2 rounded-xl border border-border bg-card p-2 sm:flex-row sm:items-center">
+              <Input
+                value={bulkTags}
+                onChange={event => setBulkTags(event.target.value)}
+                aria-label="bulk tags to add"
+                placeholder="输入要追加的标签"
+                className="h-7 min-w-0 flex-1"
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="default"
+                  size="sm"
+                  aria-label="apply bulk tags"
+                  onClick={() => void updateSelectedTags('add')}
+                  disabled={bulkTagUpdating}
+                >
+                  追加标签
+                </Button>
+                {selectedTag && selectedTag !== PROMPT_TAG && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    aria-label="remove active tag from selected assets"
+                    onClick={() => void updateSelectedTags('remove-active')}
+                    disabled={bulkTagUpdating}
+                  >
+                    移除 {selectedTag}
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

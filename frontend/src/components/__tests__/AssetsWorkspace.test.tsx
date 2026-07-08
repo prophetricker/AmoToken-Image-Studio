@@ -6,6 +6,7 @@ import type { TextAsset } from '@/lib/asset-store';
 
 const assetStoreMocks = vi.hoisted(() => ({
   listAssets: vi.fn(),
+  updateImageAsset: vi.fn(),
   updateTextAsset: vi.fn(),
   addTextAsset: vi.fn(),
   addImageAsset: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock('@/lib/asset-store', async importOriginal => {
     getAssetBlob: assetStoreMocks.getAssetBlob,
     getAssetThumbnailBlob: assetStoreMocks.getAssetThumbnailBlob,
     listAssets: assetStoreMocks.listAssets,
+    updateImageAsset: assetStoreMocks.updateImageAsset,
     updateTextAsset: assetStoreMocks.updateTextAsset,
   };
 });
@@ -83,6 +85,56 @@ describe('AssetsWorkspace text assets', () => {
         tags: ['漫画', '海报', '收藏'],
         note: '给关系图工作流复用',
         content: '生成可读性更高的角色关系图',
+      });
+    });
+  });
+
+  it('adds tags to selected assets in bulk', async () => {
+    const asciiAsset: TextAsset = {
+      ...textAsset,
+      id: 'text-asset-ascii',
+      name: 'Poster prompt',
+      content: 'Poster prompt content',
+      tags: ['poster'],
+      note: 'Reusable prompt',
+    };
+    assetStoreMocks.listAssets.mockResolvedValue([asciiAsset]);
+
+    render(<AssetsWorkspace active />);
+
+    fireEvent.click(await screen.findByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: 'bulk asset tags' }));
+    fireEvent.change(screen.getByLabelText('bulk tags to add'), { target: { value: 'favorite reusable' } });
+    fireEvent.click(screen.getByRole('button', { name: 'apply bulk tags' }));
+
+    await waitFor(() => {
+      expect(assetStoreMocks.updateTextAsset).toHaveBeenCalledWith('text-asset-ascii', {
+        tags: ['poster', 'favorite', 'reusable'],
+      });
+    });
+  });
+
+  it('removes the active tag from selected assets in bulk', async () => {
+    const asciiAsset: TextAsset = {
+      ...textAsset,
+      id: 'text-asset-ascii',
+      name: 'Poster prompt',
+      content: 'Poster prompt content',
+      tags: ['poster', 'favorite'],
+      note: 'Reusable prompt',
+    };
+    assetStoreMocks.listAssets.mockResolvedValue([asciiAsset]);
+
+    render(<AssetsWorkspace active />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'filter tag poster' }));
+    fireEvent.click(await screen.findByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: 'bulk asset tags' }));
+    fireEvent.click(screen.getByRole('button', { name: 'remove active tag from selected assets' }));
+
+    await waitFor(() => {
+      expect(assetStoreMocks.updateTextAsset).toHaveBeenCalledWith('text-asset-ascii', {
+        tags: ['favorite'],
       });
     });
   });

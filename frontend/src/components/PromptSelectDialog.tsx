@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { fetchAllPromptSources, DEFAULT_CATEGORIES, ALL_CATEGORY, type PromptWithKey } from '@/lib/prompt-gallery-data';
+import { fetchStablePromptGallery, DEFAULT_CATEGORIES, ALL_CATEGORY, type PromptWithKey } from '@/lib/prompt-gallery-data';
 
 const PAGE_SIZE = 12;
 
@@ -33,7 +33,7 @@ export const PromptSelectDialog = memo(function PromptSelectDialog({
     if (!open) return;
 
     setLoading(true);
-    fetchAllPromptSources()
+    fetchStablePromptGallery()
       .then(result => {
         setCategories(result.categories);
         setAllPrompts(result.prompts);

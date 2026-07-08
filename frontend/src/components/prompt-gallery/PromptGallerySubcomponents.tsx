@@ -5,7 +5,7 @@ import { Loader2, ExternalLink, Copy, Check, ChevronLeft, ChevronRight, Maximize
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ImageHoverActions } from '@/components/workspace/results/ImageHoverActions';
-import { runImageAction, dispatchImageActionToast, type ImageActionPayload } from '@/lib/image-actions';
+import { runImageAction, dispatchImageActionToast, getImageActionPayloadKey, type ImageActionPayload } from '@/lib/image-actions';
 import { addTextAsset } from '@/lib/asset-store';
 import type { PromptGalleryItem } from '@/lib/prompt-gallery-types';
 
@@ -504,6 +504,9 @@ export function PromptGalleryImagePreviewModal({
   const currentSrc = images[currentIndex];
   const isMultiple = images.length > 1;
   const currentPayload = makePromptGalleryImagePayload(prompt, currentSrc, currentIndex);
+  const [savedAssetKeys, setSavedAssetKeys] = useState<Set<string>>(new Set());
+  const currentPayloadKey = getImageActionPayloadKey(currentPayload);
+  const currentAssetSaved = savedAssetKeys.has(currentPayloadKey);
 
   const resetView = () => { 
     setScale(1); 
@@ -704,8 +707,16 @@ export function PromptGalleryImagePreviewModal({
         <button onClick={() => void runImageAction('copy', currentPayload)} className="w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors" title="复制图片">
           <Copy className="w-4 h-4" />
         </button>
-        <button onClick={() => void runImageAction('add-to-assets', currentPayload)} className="w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors" title="添加到素材库">
-          <ImagePlus className="w-4 h-4" />
+        <button
+          onClick={() => void runImageAction('add-to-assets', currentPayload).then(result => {
+            if (result?.action === 'add-to-assets') {
+              setSavedAssetKeys(prev => new Set(prev).add(currentPayloadKey));
+            }
+          })}
+          className="w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+          title="添加到素材库"
+        >
+          {currentAssetSaved ? <Check className="w-4 h-4 text-success" /> : <ImagePlus className="w-4 h-4" />}
         </button>
         <button onClick={() => void runImageAction('use-as-reference', currentPayload)} className="w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors" title="作为图生图参考">
           <Wand2 className="w-4 h-4" />

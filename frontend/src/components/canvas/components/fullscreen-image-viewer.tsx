@@ -1,11 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Copy, Download, ImagePlus, Maximize2, Pencil, Wand2, X } from "lucide-react";
+import { Check, Copy, Download, ImagePlus, Maximize2, Pencil, Wand2, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ImageAnnotationEditor } from "@/components/canvas/components/image-annotation-editor";
-import { applyAnnotatedImageAsReference, runImageAction, type ImageActionPayload } from "@/lib/image-actions";
+import { applyAnnotatedImageAsReference, getImageActionPayloadKey, runImageAction, type ImageActionPayload } from "@/lib/image-actions";
 
 interface FullscreenImageViewerProps {
   src: string;
@@ -25,6 +25,9 @@ export function FullscreenImageViewer({ src, title, onClose, actionPayload }: Fu
   const [scaleState, setScaleState] = useState(1);
   const [dragging, setDragging] = useState(false);
   const [showAnnotationEditor, setShowAnnotationEditor] = useState(false);
+  const [savedAssetKeys, setSavedAssetKeys] = useState<Set<string>>(new Set());
+  const actionPayloadKey = actionPayload ? getImageActionPayloadKey(actionPayload) : "";
+  const assetSaved = actionPayloadKey ? savedAssetKeys.has(actionPayloadKey) : false;
   const dragStart = useRef({ x: 0, y: 0 });
   const posStart = useRef({ x: 0, y: 0 });
 
@@ -155,8 +158,16 @@ export function FullscreenImageViewer({ src, title, onClose, actionPayload }: Fu
             <button onClick={() => void runImageAction('copy', actionPayload)} className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="复制图片">
               <Copy className="w-4 h-4" />
             </button>
-            <button onClick={() => void runImageAction('add-to-assets', actionPayload)} className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="添加到素材库">
-              <ImagePlus className="w-4 h-4" />
+            <button
+              onClick={() => void runImageAction('add-to-assets', actionPayload).then(result => {
+                if (result?.action === 'add-to-assets' && actionPayloadKey) {
+                  setSavedAssetKeys(prev => new Set(prev).add(actionPayloadKey));
+                }
+              })}
+              className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              title="添加到素材库"
+            >
+              {assetSaved ? <Check className="w-4 h-4 text-success" /> : <ImagePlus className="w-4 h-4" />}
             </button>
             <button onClick={() => void runImageAction('use-as-reference', actionPayload)} className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="作为图生图参考">
               <Wand2 className="w-4 h-4" />

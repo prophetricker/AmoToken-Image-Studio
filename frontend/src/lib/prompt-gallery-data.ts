@@ -399,6 +399,64 @@ export interface FetchResult {
   categories: string[];
 }
 
+type PromptSourceFetcher = () => Promise<FetchResult>;
+
+function normalizeServerPrompt(raw: unknown, index: number): PromptWithKey | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const item = raw as Partial<PromptGalleryItem> & {
+    source?: string;
+    sourceUrl?: string;
+    category?: string;
+    uniqueKey?: string;
+  };
+  const title = typeof item.title === 'string' ? item.title.trim() : '';
+  const content = typeof item.content === 'string' ? item.content.trim() : '';
+  if (!title || !content) return null;
+  const tags = Array.isArray(item.tags) ? item.tags.filter((tag): tag is string => typeof tag === 'string') : [];
+  const category = typeof item.category === 'string' && item.category.trim()
+    ? item.category.trim()
+    : inferCategory(title, content, tags);
+  const source = typeof item.source === 'string' && item.source.trim() ? item.source.trim() : 'server';
+  const id = typeof item.id === 'string' && item.id.trim() ? item.id.trim() : `server-${index}`;
+  return {
+    id,
+    title,
+    content,
+    images: Array.isArray(item.images) ? item.images.filter((image): image is string => typeof image === 'string') : [],
+    tags,
+    contributor: typeof item.contributor === 'string' ? item.contributor : '',
+    notes: typeof item.notes === 'string' ? item.notes : '',
+    source,
+    sourceUrl: typeof item.sourceUrl === 'string' ? item.sourceUrl : '',
+    category,
+    uniqueKey: typeof item.uniqueKey === 'string' && item.uniqueKey.trim()
+      ? item.uniqueKey
+      : `server-${source}-${id}-${index}`,
+  };
+}
+
+function normalizeServerPromptData(data: unknown): PromptWithKey[] {
+  const rawPrompts: unknown[] = [];
+  if (Array.isArray(data)) {
+    rawPrompts.push(...data);
+  } else if (data && typeof data === 'object' && Array.isArray((data as PromptGalleryData).sections)) {
+    for (const section of (data as PromptGalleryData).sections) {
+      if (Array.isArray(section.prompts)) rawPrompts.push(...section.prompts);
+    }
+  }
+  return rawPrompts
+    .map((item, index) => normalizeServerPrompt(item, index))
+    .filter((prompt): prompt is PromptWithKey => Boolean(prompt));
+}
+
+function categoriesFromPrompts(prompts: PromptWithKey[]): string[] {
+  const categorySet = new Set<string>(DEFAULT_CATEGORIES.filter(c => c !== ALL_CATEGORY));
+  for (const prompt of prompts) {
+    if (prompt.category) categorySet.add(prompt.category);
+  }
+  return [ALL_CATEGORY, ...Array.from(categorySet)];
+}
+
 export async function fetchAllPromptSources(): Promise<FetchResult> {
   const settled = await Promise.allSettled(
     PROMPT_DATA_SOURCES.map(source => fetchSource(source))
@@ -420,4 +478,22 @@ export async function fetchAllPromptSources(): Promise<FetchResult> {
     prompts,
     categories: [ALL_CATEGORY, ...Array.from(categorySet)],
   };
+}
+
+export async function fetchStablePromptGallery(fallback: PromptSourceFetcher = fetchAllPromptSources): Promise<FetchResult> {
+  try {
+    const res = await fetch('/api/nova/prompts', { cache: 'no-store' });
+    if (res.ok) {
+      const prompts = normalizeServerPromptData(await res.json());
+      if (prompts.length > 0) {
+        return {
+          prompts,
+          categories: categoriesFromPrompts(prompts),
+        };
+      }
+    }
+  } catch {
+    // External aggregation remains the fallback when the local snapshot is unavailable.
+  }
+  return fallback();
 }

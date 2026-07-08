@@ -1,6 +1,6 @@
 'use client';
 
-import { Copy, Download, ImagePlus, Maximize2, Settings, Wand2, X, Shuffle, User, Wallpaper, RefreshCw } from 'lucide-react';
+import { Check, Copy, Download, ImagePlus, Maximize2, Settings, Wand2, X, Shuffle, User, Wallpaper, RefreshCw } from 'lucide-react';
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, useId, forwardRef, useImperativeHandle } from 'react';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -13,7 +13,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { runImageAction, type ImageActionPayload } from '@/lib/image-actions';
+import { getImageActionPayloadKey, runImageAction, type ImageActionPayload } from '@/lib/image-actions';
 
 import { BA_RANDOM_URL, BING_WALLPAPER_URL } from '@/lib/constants';
 
@@ -306,6 +306,9 @@ function RandomImageViewer({ src, title, loading, onRefresh, onImageLoaded, onIm
     sourceRef: src,
   }), [instanceId, src, title]);
   const resolvedActionPayload = actionPayload || defaultActionPayload;
+  const [savedAssetKeys, setSavedAssetKeys] = useState<Set<string>>(new Set());
+  const resolvedActionPayloadKey = getImageActionPayloadKey(resolvedActionPayload);
+  const assetSaved = savedAssetKeys.has(resolvedActionPayloadKey);
 
   // Reset view when src changes (new image loaded)
   useEffect(() => { queueMicrotask(resetView); }, [src, resetView]);
@@ -419,8 +422,16 @@ function RandomImageViewer({ src, title, loading, onRefresh, onImageLoaded, onIm
         <button onClick={() => void runImageAction('copy', resolvedActionPayload)} className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="复制图片">
           <Copy className="w-4 h-4" />
         </button>
-        <button onClick={() => void runImageAction('add-to-assets', resolvedActionPayload)} className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="添加到素材库">
-          <ImagePlus className="w-4 h-4" />
+        <button
+          onClick={() => void runImageAction('add-to-assets', resolvedActionPayload).then(result => {
+            if (result?.action === 'add-to-assets') {
+              setSavedAssetKeys(prev => new Set(prev).add(resolvedActionPayloadKey));
+            }
+          })}
+          className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          title="添加到素材库"
+        >
+          {assetSaved ? <Check className="w-4 h-4 text-success" /> : <ImagePlus className="w-4 h-4" />}
         </button>
         <button onClick={() => void runImageAction('use-as-reference', resolvedActionPayload)} className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="作为图生图参考">
           <Wand2 className="w-4 h-4" />

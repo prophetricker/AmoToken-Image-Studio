@@ -29,6 +29,7 @@ export interface ImageAsset {
   sourceLabel: string;
   sourceRef?: string;
   prompt?: string;
+  metadataEditedAt?: number;
   createdAt: number;
   updatedAt: number;
   lastUsedAt?: number;
@@ -46,6 +47,7 @@ export interface TextAsset {
   sourceKind: AssetSourceKind;
   sourceLabel: string;
   sourceRef?: string;
+  metadataEditedAt?: number;
   createdAt: number;
   updatedAt: number;
   lastUsedAt?: number;
@@ -304,6 +306,7 @@ export async function addImageAsset(input: AddImageAssetInput): Promise<ImageAss
   const sameSourceAsset = existingAssets.filter(isImageAsset).find(asset =>
     asset.hash === hash &&
     asset.sourceKind === input.sourceKind &&
+    !asset.metadataEditedAt &&
     asset.sourceRef &&
     asset.sourceRef === input.sourceRef
   );
@@ -406,13 +409,18 @@ export async function addTextAsset(input: AddTextAssetInput): Promise<TextAsset>
   return asset;
 }
 
-export async function findImageAssetByBlob(blob: Blob): Promise<ImageAsset | null> {
+export async function findImageAssetsByBlob(blob: Blob): Promise<ImageAsset[]> {
   const hash = await hashBlob(blob);
   const db = await openAssetsDB();
-  if (!db) return null;
+  if (!db) return [];
   const assets = await getAllFromStore<AssetItem>(db, ASSETS_STORE);
   db.close();
-  return assets.filter(isImageAsset).find(asset => asset.hash === hash) || null;
+  return assets.filter(isImageAsset).filter(asset => asset.hash === hash);
+}
+
+export async function findImageAssetByBlob(blob: Blob): Promise<ImageAsset | null> {
+  const assets = await findImageAssetsByBlob(blob);
+  return assets[0] || null;
 }
 
 export async function listAssets(kind?: AssetKind): Promise<AssetItem[]> {
@@ -482,6 +490,7 @@ export async function updateImageAsset(assetId: string, input: UpdateImageAssetI
     tags: input.tags ? sanitizeTags(input.tags) : current.tags,
     note: typeof input.note === 'string' ? input.note : current.note,
     updatedAt: now(),
+    metadataEditedAt: now(),
   };
   await putAssetAndBlob(updated, null);
 }
@@ -501,6 +510,7 @@ export async function updateTextAsset(assetId: string, input: UpdateTextAssetInp
     tags: input.tags ? sanitizeTags(input.tags) : (current.tags || []),
     note: typeof input.note === 'string' ? input.note : (current.note || ''),
     updatedAt,
+    metadataEditedAt: updatedAt,
   };
   await putAssetAndBlob(updated, null);
 }

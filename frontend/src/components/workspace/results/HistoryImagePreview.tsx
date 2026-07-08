@@ -1,8 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Copy, Download, ImagePlus, Maximize2, Pencil, Wand2, X } from 'lucide-react';
-import { runImageAction, applyAnnotatedImageAsReference, type ImageActionPayload } from '@/lib/image-actions';
+import { Check, ChevronLeft, ChevronRight, Copy, Download, ImagePlus, Maximize2, Pencil, Wand2, X } from 'lucide-react';
+import { runImageAction, applyAnnotatedImageAsReference, getImageActionPayloadKey, type ImageActionPayload } from '@/lib/image-actions';
 import { ImageAnnotationEditor } from '@/components/canvas/components/image-annotation-editor';
 
 function getDistance(t1: { clientX: number; clientY: number }, t2: { clientX: number; clientY: number }) {
@@ -68,6 +68,9 @@ export function HistoryImagePreview({
   const currentSrc = images[currentIndex];
   const isMultiple = images.length > 1;
   const currentPayload = actionPayloads?.[currentIndex];
+  const [savedAssetKeys, setSavedAssetKeys] = useState<Set<string>>(new Set());
+  const currentPayloadKey = currentPayload ? getImageActionPayloadKey(currentPayload) : '';
+  const currentAssetSaved = currentPayloadKey ? savedAssetKeys.has(currentPayloadKey) : false;
 
   useEffect(() => {
     onIndexChange?.(currentIndex);
@@ -335,8 +338,16 @@ export function HistoryImagePreview({
           </button>
         )}
         {currentPayload && showAddToAssets && (
-          <button onClick={() => void runImageAction('add-to-assets', currentPayload)} className="flex h-8 w-8 items-center justify-center rounded-full text-white/70 transition-colors hover:bg-white/10 hover:text-white" title="添加到素材库">
-            <ImagePlus className="w-4 h-4" />
+          <button
+            onClick={() => void runImageAction('add-to-assets', currentPayload).then(result => {
+              if (result?.action === 'add-to-assets' && currentPayloadKey) {
+                setSavedAssetKeys(prev => new Set(prev).add(currentPayloadKey));
+              }
+            })}
+            className="flex h-8 w-8 items-center justify-center rounded-full text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+            title="添加到素材库"
+          >
+            {currentAssetSaved ? <Check className="w-4 h-4 text-success" /> : <ImagePlus className="w-4 h-4" />}
           </button>
         )}
         {currentPayload && showUseAsReference && (

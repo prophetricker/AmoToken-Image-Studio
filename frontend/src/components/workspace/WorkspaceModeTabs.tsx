@@ -37,6 +37,7 @@ export function WorkspaceModeTabs({ wideMode = false, showPromptGallery = false,
   const gridCols =
     allTabs.length === 7 ? 'sm:grid-cols-7'
       : allTabs.length === 6 ? 'sm:grid-cols-6'
+        : allTabs.length === 5 ? 'sm:grid-cols-5'
         : allTabs.length === 4 ? 'sm:grid-cols-4'
           : 'sm:grid-cols-3';
   const dragStateRef = useRef({

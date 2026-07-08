@@ -1,8 +1,9 @@
 'use client';
 
-import { Copy, Download, Eye, ImagePlus, Wand2 } from 'lucide-react';
+import { Check, Copy, Download, Eye, ImagePlus, Wand2 } from 'lucide-react';
+import { useState } from 'react';
 import type React from 'react';
-import { runImageAction, type ImageActionPayload } from '@/lib/image-actions';
+import { getImageActionPayloadKey, runImageAction, type ImageActionPayload } from '@/lib/image-actions';
 import { cn } from '@/lib/utils';
 
 interface ImageHoverActionsProps {
@@ -61,6 +62,10 @@ export function ImageHoverActions({
   extraActions,
   className,
 }: ImageHoverActionsProps) {
+  const [savedAssetKeys, setSavedAssetKeys] = useState<Set<string>>(new Set());
+  const payloadKey = getImageActionPayloadKey(payload);
+  const assetSaved = savedAssetKeys.has(payloadKey);
+
   return (
     <div
       className={cn(
@@ -87,10 +92,14 @@ export function ImageHoverActions({
           compact={compact}
           onClick={event => {
             stop(event);
-            void runImageAction('add-to-assets', payload);
+            void runImageAction('add-to-assets', payload).then(result => {
+              if (result?.action === 'add-to-assets') {
+                setSavedAssetKeys(prev => new Set(prev).add(payloadKey));
+              }
+            });
           }}
         >
-          <ImagePlus className="h-3.5 w-3.5" />
+          {assetSaved ? <Check className="h-3.5 w-3.5 text-success" /> : <ImagePlus className="h-3.5 w-3.5" />}
         </ActionButton>
       )}
       {showDownload && (

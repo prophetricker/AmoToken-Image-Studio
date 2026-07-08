@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { ALL_CATEGORY, DEFAULT_CATEGORIES, PROMPT_DATA_SOURCES, fetchAllPromptSources, getPromptSourceLabel, type PromptWithKey } from "@/lib/prompt-gallery-data";
+import { ALL_CATEGORY, DEFAULT_CATEGORIES, PROMPT_DATA_SOURCES, fetchStablePromptGallery, getPromptSourceLabel, type PromptWithKey } from "@/lib/prompt-gallery-data";
 import { cn } from "@/lib/utils";
 
 type CanvasPromptGalleryImportDialogProps = {
@@ -24,7 +24,7 @@ let cachedBlacklist: string[] | null = null;
 
 async function loadPromptGalleryData() {
   if (!cachedPromptData) {
-    cachedPromptData = await fetchAllPromptSources();
+    cachedPromptData = await fetchStablePromptGallery();
   }
   if (!cachedBlacklist) {
     cachedBlacklist = await fetchPromptBlacklist();

@@ -31,4 +31,13 @@ describe('WorkspaceModeTabs v0.8 public modes', () => {
     expect(screen.getByText('我的素材')).toBeInTheDocument();
     expect(screen.getByText('无限画布')).toBeInTheDocument();
   });
+  it('uses five columns when prompt gallery makes five public tabs', () => {
+    const { container } = render(
+      <Tabs value="image-generation">
+        <WorkspaceModeTabs showPromptGallery />
+      </Tabs>,
+    );
+
+    expect(container.querySelector('[role="tablist"]')).toHaveClass('sm:grid-cols-5');
+  });
 });

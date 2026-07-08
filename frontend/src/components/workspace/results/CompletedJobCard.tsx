@@ -23,6 +23,7 @@ import { PromptTextDialog } from '@/components/workspace/results/PromptTextDialo
 import {
   copyImagePayload,
   dispatchImageActionToast,
+  getImageActionPayloadKey,
   runImageAction,
   type ImageActionPayload,
 } from '@/lib/image-actions';
@@ -157,6 +158,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
   const [copyMenuOpen, setCopyMenuOpen] = useState(false);
   const [retryingDownload, setRetryingDownload] = useState(false);
+  const [savedAssetKeys, setSavedAssetKeys] = useState<Set<string>>(new Set());
 
   const sourceImages = useMemo(() => job.images || (job.imageData ? [job.imageData] : []), [job.imageData, job.images]);
   const [images, setImages] = useState(sourceImages);
@@ -263,18 +265,29 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
     void runImageAction('download', payload);
   };
 
-  const addImageToAssets = (index: number = 0) => {
+  const addImageToAssets = async (index: number = 0) => {
     const payload = actionPayloads[index];
     if (!payload) return;
-    void runImageAction('add-to-assets', payload);
+    const result = await runImageAction('add-to-assets', payload);
+    if (result?.action === 'add-to-assets') {
+      const key = getImageActionPayloadKey(payload);
+      setSavedAssetKeys(prev => new Set(prev).add(key));
+    }
   };
 
   const addAllToAssets = () => {
     actionPayloads.forEach((_, index) => {
-      setTimeout(() => addImageToAssets(index), index * 100);
+      setTimeout(() => void addImageToAssets(index), index * 100);
     });
     setAssetMenuOpen(false);
   };
+
+  const isAssetSaved = (index: number) => {
+    const payload = actionPayloads[index];
+    return payload ? savedAssetKeys.has(getImageActionPayloadKey(payload)) : false;
+  };
+
+  const allAssetsSaved = actionPayloads.length > 0 && actionPayloads.every((_, index) => isAssetSaved(index));
 
   const downloadAll = () => {
     actionPayloads.forEach((_, index) => {
@@ -502,19 +515,20 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
             {isMultiple ? (
               <DropdownMenu open={assetMenuOpen} onOpenChange={setAssetMenuOpen}>
                 <DropdownMenuTrigger className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })} title="添加到素材库" aria-label="添加到素材库">
-                  <ImagePlus className="w-4 h-4" />
+                  {allAssetsSaved ? <Check className="w-4 h-4 text-success" /> : <ImagePlus className="w-4 h-4" />}
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   {sourceImages.map((_, index) => (
                     <DropdownMenuItem key={index} onClick={() => {
-                      addImageToAssets(index);
+                      void addImageToAssets(index);
                       setAssetMenuOpen(false);
                     }}>
+                      {isAssetSaved(index) && <Check className="mr-1.5 w-3.5 h-3.5 text-success" />}
                       保存图片 {index + 1}
                     </DropdownMenuItem>
                   ))}
                   <DropdownMenuItem onClick={addAllToAssets} className="font-medium text-primary">
-                    <ImagePlus className="mr-1.5 w-3.5 h-3.5" />
+                    {allAssetsSaved ? <Check className="mr-1.5 w-3.5 h-3.5 text-success" /> : <ImagePlus className="mr-1.5 w-3.5 h-3.5" />}
                     保存全部
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -523,11 +537,11 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
               <Button
                 variant="ghost"
                 size="icon-sm"
-                onClick={() => addImageToAssets(0)}
+                onClick={() => void addImageToAssets(0)}
                 title="添加到素材库"
                 aria-label="添加到素材库"
               >
-                <ImagePlus className="w-4 h-4" />
+                {isAssetSaved(0) ? <Check className="w-4 h-4 text-success" /> : <ImagePlus className="w-4 h-4" />}
               </Button>
             )}
 

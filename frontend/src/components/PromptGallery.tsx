@@ -11,7 +11,7 @@ import {
   ALL_CATEGORY,
   DEFAULT_CATEGORIES,
   PROMPT_DATA_SOURCES,
-  fetchAllPromptSources,
+  fetchStablePromptGallery,
   getPromptSourceLabel,
   type PromptWithKey,
 } from '@/lib/prompt-gallery-data';
@@ -55,7 +55,7 @@ const PromptGallery = memo(function PromptGallery({
         setBlacklist([]);
       });
 
-    fetchAllPromptSources()
+    fetchStablePromptGallery()
       .then((result) => {
         setCategories(result.categories);
         setAllPrompts(result.prompts);
