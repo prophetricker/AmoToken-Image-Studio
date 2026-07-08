@@ -5,6 +5,10 @@ const path = require('path');
 const next = process.env.NODE_ENV !== 'production' ? require('next') : null;
 const Database = require('better-sqlite3');
 const { WebSocketServer } = require('ws');
+const {
+  getPromptImageCacheKey,
+  isAllowedPromptImageUrl,
+} = require('./prompt-image-cache');
 
 const ENV_FILE_PATH = path.join(process.cwd(), '.env');
 const TASK_STATUS = {
@@ -157,6 +161,10 @@ const CUSTOM_IMAGE_SIZE_LIMITS = {
 const IS_DEV = process.env.NODE_ENV !== 'production';
 const STATIC_DIR = path.join(__dirname, '..', 'frontend', 'out');
 const IMAGE_DIR = process.env.NOVA_IMAGE_DIR || path.join(__dirname, 'nova-images');
+const PROMPT_IMAGE_CACHE_DIR = process.env.NOVA_PROMPT_IMAGE_CACHE_DIR || path.join(path.dirname(IMAGE_DIR), 'prompt-gallery-images');
+const PROMPT_IMAGE_FETCH_TIMEOUT_MS = Math.max(5000, Number(process.env.NOVA_PROMPT_IMAGE_FETCH_TIMEOUT_MS || 20000));
+const PROMPT_IMAGE_MAX_BYTES = Math.max(1024 * 1024, Number(process.env.NOVA_PROMPT_IMAGE_MAX_BYTES || 8 * 1024 * 1024));
+const PROMPT_IMAGE_CACHE_MAX_BYTES = Math.max(32 * 1024 * 1024, Number(process.env.NOVA_PROMPT_IMAGE_CACHE_MAX_BYTES || 512 * 1024 * 1024));
 const taskRefImages = new Map();
 
 const app = IS_DEV ? next({ dev: IS_DEV, hostname: HOSTNAME, port: PORT, dir: path.join(__dirname, '..', 'frontend') }) : null;
@@ -402,10 +410,121 @@ function ensureImageDir() {
   }
 }
 
+function ensurePromptImageCacheDir() {
+  try {
+    if (!fs.existsSync(PROMPT_IMAGE_CACHE_DIR)) {
+      fs.mkdirSync(PROMPT_IMAGE_CACHE_DIR, { recursive: true });
+    }
+    console.log(`[prompt-gallery-cache] cache dir: ${PROMPT_IMAGE_CACHE_DIR}`);
+  } catch (error) {
+    console.error(`[prompt-gallery-cache] unable to create cache dir: ${PROMPT_IMAGE_CACHE_DIR}`, error);
+  }
+}
+
 function getImageExtension(mimeType) {
   if (mimeType?.includes('jpeg') || mimeType?.includes('jpg')) return 'jpg';
   if (mimeType?.includes('webp')) return 'webp';
   return 'png';
+}
+
+function getPromptImageContentType(filePath) {
+  const contentType = getContentType(filePath);
+  return contentType === 'application/octet-stream' ? 'image/png' : contentType;
+}
+
+function findCachedPromptImageFile(cacheKey) {
+  const extensions = ['.png', '.jpg', '.jpeg', '.webp', '.gif'];
+  const exact = path.join(PROMPT_IMAGE_CACHE_DIR, cacheKey.fileName);
+  if (fs.existsSync(exact)) return exact;
+  for (const ext of extensions) {
+    const candidate = path.join(PROMPT_IMAGE_CACHE_DIR, `${cacheKey.hash}${ext}`);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function prunePromptImageCache() {
+  try {
+    if (!fs.existsSync(PROMPT_IMAGE_CACHE_DIR)) return;
+    const files = fs.readdirSync(PROMPT_IMAGE_CACHE_DIR)
+      .map(name => {
+        const filePath = path.join(PROMPT_IMAGE_CACHE_DIR, name);
+        const stat = fs.statSync(filePath);
+        return stat.isFile() ? { filePath, size: stat.size, mtimeMs: stat.mtimeMs } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.mtimeMs - b.mtimeMs);
+    let total = files.reduce((sum, file) => sum + file.size, 0);
+    for (const file of files) {
+      if (total <= PROMPT_IMAGE_CACHE_MAX_BYTES) break;
+      try {
+        fs.unlinkSync(file.filePath);
+        total -= file.size;
+      } catch (error) {
+        console.warn(`[prompt-gallery-cache] prune failed: ${file.filePath}`, error?.message || error);
+      }
+    }
+  } catch (error) {
+    console.warn('[prompt-gallery-cache] prune scan failed', error?.message || error);
+  }
+}
+
+async function fetchPromptImageWithTimeout(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PROMPT_IMAGE_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+        'User-Agent': 'AmoToken-Nova-PromptGallery/1.0',
+      },
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function getCachedPromptImageFile(rawUrl) {
+  if (!isAllowedPromptImageUrl(rawUrl)) {
+    throw createHttpError(400, 'INVALID_PROMPT_IMAGE_URL', 'Invalid prompt image URL');
+  }
+
+  ensurePromptImageCacheDir();
+  const initialKey = getPromptImageCacheKey(rawUrl);
+  const cached = findCachedPromptImageFile(initialKey);
+  if (cached) {
+    try { fs.utimesSync(cached, new Date(), new Date()); } catch { /* ignore */ }
+    return cached;
+  }
+
+  const response = await fetchPromptImageWithTimeout(initialKey.normalizedUrl);
+  if (!response.ok) {
+    throw createHttpError(502, 'PROMPT_IMAGE_FETCH_FAILED', `Prompt image fetch failed: ${response.status}`);
+  }
+
+  const contentType = response.headers.get('content-type') || 'image/png';
+  if (!/^image\//i.test(contentType)) {
+    throw createHttpError(415, 'PROMPT_IMAGE_NOT_IMAGE', 'Prompt image response is not an image');
+  }
+
+  const contentLength = Number(response.headers.get('content-length') || 0);
+  if (contentLength > PROMPT_IMAGE_MAX_BYTES) {
+    throw createHttpError(413, 'PROMPT_IMAGE_TOO_LARGE', 'Prompt image is too large');
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.length > PROMPT_IMAGE_MAX_BYTES) {
+    throw createHttpError(413, 'PROMPT_IMAGE_TOO_LARGE', 'Prompt image is too large');
+  }
+
+  const finalKey = getPromptImageCacheKey(initialKey.normalizedUrl, contentType);
+  const filePath = path.join(PROMPT_IMAGE_CACHE_DIR, finalKey.fileName);
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tempPath, buffer);
+  fs.renameSync(tempPath, filePath);
+  prunePromptImageCache();
+  return filePath;
 }
 
 function saveImageToDisk(taskId, itemIndex, subIndex, imageBuffer, mimeType) {
@@ -552,6 +671,7 @@ function getContentType(filePath) {
     '.jpg': 'image/jpeg',
     '.jpeg': 'image/jpeg',
     '.webp': 'image/webp',
+    '.gif': 'image/gif',
     '.svg': 'image/svg+xml',
     '.ico': 'image/x-icon',
     '.txt': 'text/plain; charset=utf-8',
@@ -1544,6 +1664,29 @@ async function handleApi(req, res, pathname) {
       return true;
     }
 
+    if (req.method === 'GET' && apiPathname === '/api/nova/prompt-gallery/image') {
+      const parsed = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+      const imageUrl = parsed.searchParams.get('url') || '';
+      try {
+        const filePath = await getCachedPromptImageFile(imageUrl);
+        const stat = fs.statSync(filePath);
+        pipeFileToResponse(res, filePath, 200, {
+          'Content-Type': getPromptImageContentType(filePath),
+          'Content-Length': stat.size,
+          'Cache-Control': 'public, max-age=86400',
+        });
+      } catch (error) {
+        if (isHttpError(error)) {
+          sendHttpError(res, error);
+        } else if (error && error.name === 'AbortError') {
+          sendJson(res, 504, { error: 'Prompt image fetch timeout', code: 'PROMPT_IMAGE_TIMEOUT' });
+        } else {
+          sendJson(res, 502, { error: normalizeError(error), code: 'PROMPT_IMAGE_FETCH_FAILED' });
+        }
+      }
+      return true;
+    }
+
     if (req.method === 'GET' && apiPathname === '/api/nova/prompts') {
       const promptsPath = path.join(__dirname, 'prompts.json');
       try {
@@ -1809,6 +1952,7 @@ async function handleApi(req, res, pathname) {
 
 initDatabase();
 ensureImageDir();
+ensurePromptImageCacheDir();
 cleanupExpiredTasks();
 setInterval(cleanupExpiredTasks, CLEANUP_INTERVAL_MS).unref();
 setInterval(cleanupRateLimitBuckets, CLEANUP_INTERVAL_MS).unref();

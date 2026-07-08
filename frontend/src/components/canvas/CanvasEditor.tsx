@@ -42,7 +42,7 @@ import { requireDefaultConfiguredTextModel } from "@/lib/model-endpoints";
 import { readSseStream } from "@/lib/sse-stream-parser";
 import { MODEL_IMAGE_LIMITS } from "@/lib/gemini-config";
 import { normalizeModel } from "@/lib/model-capabilities";
-import type { PromptWithKey } from "@/lib/prompt-gallery-data";
+import { toPromptGalleryImageSrc, type PromptWithKey } from "@/lib/prompt-gallery-data";
 
 type DialogState = { type: "crop" | "split" | "upscale" | "angle"; nodeId: string; source: string } | null;
 
@@ -157,7 +157,7 @@ function storedToMetadata(stored: UploadedImage | CanvasGeneratedImage, extra?: 
 
 async function importPromptGalleryImage(url: string, promptContent: string) {
   try {
-    const response = await fetch(url);
+    const response = await fetch(toPromptGalleryImageSrc(url));
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const blob = await response.blob();
     const stored = await uploadImage(blob);

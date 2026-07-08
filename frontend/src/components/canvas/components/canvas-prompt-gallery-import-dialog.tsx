@@ -15,6 +15,7 @@ import {
   filterPromptGalleryPrompts,
   getPromptCategories,
   getPromptSourceLabel,
+  toPromptGalleryImageSrc,
   type PromptWithKey,
 } from "@/lib/prompt-gallery-data";
 import { cn } from "@/lib/utils";
@@ -311,7 +312,7 @@ function PromptImportCard({
       <div className="grid grid-cols-[132px_minmax(0,1fr)] gap-3 p-2">
         <div className="relative aspect-square overflow-hidden rounded-md bg-muted">
           {image ? (
-            <img src={image} alt={prompt.title} className="h-full w-full object-cover" loading="lazy" />
+            <img src={toPromptGalleryImageSrc(image)} alt={prompt.title} className="h-full w-full object-cover" loading="lazy" />
           ) : (
             <div className="flex h-full w-full items-center justify-center text-muted-foreground">
               <ImageIcon className="h-6 w-6 opacity-50" />

@@ -12,6 +12,7 @@ import {
   fetchStablePromptGallery,
   filterPromptGalleryPrompts,
   getPromptCategories,
+  toPromptGalleryImageSrc,
   type PromptWithKey,
 } from '@/lib/prompt-gallery-data';
 
@@ -168,7 +169,7 @@ export const PromptSelectDialog = memo(function PromptSelectDialog({
                     <h3 className="font-medium text-sm line-clamp-1">{prompt.title}</h3>
                     {prompt.images[0] && (
                       <img
-                        src={prompt.images[0]}
+                        src={toPromptGalleryImageSrc(prompt.images[0])}
                         alt={prompt.title}
                         className="w-12 h-12 rounded object-cover flex-shrink-0"
                       />

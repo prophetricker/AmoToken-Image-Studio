@@ -70,6 +70,20 @@ export const DEFAULT_CATEGORIES = ['全部', '海报', '角色', '电商', 'UI',
 
 export const ALL_CATEGORY = '全部';
 
+export function toPromptGalleryImageSrc(imageUrl?: string): string {
+  const value = imageUrl?.trim() || '';
+  if (!value) return '';
+  if (
+    value.startsWith('/')
+    || value.startsWith('data:')
+    || value.startsWith('blob:')
+  ) {
+    return value;
+  }
+  if (!/^https?:\/\//i.test(value)) return value;
+  return `/api/nova/prompt-gallery/image?url=${encodeURIComponent(value)}`;
+}
+
 const CATEGORY_ALIASES: Array<[RegExp, string]> = [
   [/^图像模板/i, '图像模板'],
   [/^视频模板/i, '视频模板'],

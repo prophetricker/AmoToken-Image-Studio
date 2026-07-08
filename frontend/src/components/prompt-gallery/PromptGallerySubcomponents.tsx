@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { ImageHoverActions } from '@/components/workspace/results/ImageHoverActions';
 import { runImageAction, dispatchImageActionToast, getImageActionPayloadKey, type ImageActionPayload } from '@/lib/image-actions';
 import { addTextAsset } from '@/lib/asset-store';
+import { toPromptGalleryImageSrc } from '@/lib/prompt-gallery-data';
 import type { PromptGalleryItem } from '@/lib/prompt-gallery-types';
 
 export type { PromptGalleryItem };
@@ -45,13 +46,16 @@ export const PromptCard = memo(function PromptCard({
   const [imageIndex, setImageIndex] = useState(0);
   const [copied, setCopied] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
+  const [failedImageSrc, setFailedImageSrc] = useState('');
   const cardRef = useRef<HTMLDivElement>(null);
 
   const hasMultipleImages = prompt.images.length > 1;
   const currentImageUrl = prompt.images[imageIndex];
-  const isCached = imageCache.has(currentImageUrl);
+  const currentImageSrc = toPromptGalleryImageSrc(currentImageUrl);
+  const isCached = imageCache.has(currentImageSrc);
   const imageLoaded = isCached;
-  const currentPayload = makePromptGalleryImagePayload(prompt, currentImageUrl, imageIndex);
+  const currentPayload = makePromptGalleryImagePayload(prompt, currentImageSrc, imageIndex);
+  const imageFailed = failedImageSrc === currentImageSrc;
 
   // Intersection Observer for lazy rendering
   useEffect(() => {
@@ -79,7 +83,8 @@ export const PromptCard = memo(function PromptCard({
   }, []);
 
   const handleImageLoaded = () => {
-    onImageLoad(currentImageUrl);
+    setFailedImageSrc('');
+    onImageLoad(currentImageSrc);
   };
 
   const handleCopy = (e: React.MouseEvent) => {
@@ -111,15 +116,20 @@ export const PromptCard = memo(function PromptCard({
             <>
               {!imageLoaded && (
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                  {imageFailed ? (
+                    <span className="px-3 text-center text-xs text-muted-foreground">预览图加载失败</span>
+                  ) : (
+                    <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                  )}
                 </div>
               )}
               <img
-                src={currentImageUrl}
+                src={currentImageSrc}
                 alt={prompt.title}
                 className={`w-full h-full object-cover transition-opacity ${imageLoaded ? 'opacity-100' : 'opacity-0'}`}
                 loading="lazy"
                 onLoad={handleImageLoaded}
+                onError={() => setFailedImageSrc(currentImageSrc)}
               />
             </>
           ) : (
@@ -502,8 +512,9 @@ export function PromptGalleryImagePreviewModal({
   }, [currentIndex]);
 
   const currentSrc = images[currentIndex];
+  const currentImageSrc = toPromptGalleryImageSrc(currentSrc);
   const isMultiple = images.length > 1;
-  const currentPayload = makePromptGalleryImagePayload(prompt, currentSrc, currentIndex);
+  const currentPayload = makePromptGalleryImagePayload(prompt, currentImageSrc, currentIndex);
   const [savedAssetKeys, setSavedAssetKeys] = useState<Set<string>>(new Set());
   const currentPayloadKey = getImageActionPayloadKey(currentPayload);
   const currentAssetSaved = savedAssetKeys.has(currentPayloadKey);
@@ -735,7 +746,7 @@ export function PromptGalleryImagePreviewModal({
         style={{ cursor: dragging ? 'grabbing' : 'grab', willChange: 'transform, opacity' }}
       >
         <img
-          src={currentSrc}
+          src={currentImageSrc}
           alt={title}
           draggable={false}
           className="w-screen h-screen object-contain origin-center transition-transform duration-75"
