@@ -359,3 +359,23 @@ v0.10 变化：
   - `npx.cmd eslint src/components/gif/GifParametersPanel.tsx src/components/gif/GifReviewPanel.tsx src/components/gif/__tests__/GifPanels.test.tsx src/components/GifGenerationWorkspace.tsx src/hooks/useGifWorkflow.ts src/lib/gif-job-store.ts src/components/workspace/WorkspaceModeTabs.tsx`
   - `npm.cmd run build`
 - 验证结果：候选能力相关 `7` 个测试文件、`31` 条测试通过；targeted eslint 无报错；Next 生产构建通过。测试中仍有既有 React `act(...)` 警告，但退出码为 0。
+
+2026-07-09 部署 `7f43027` 后验证：
+
+- 当前镜像：`amotoken/nova-image-studio:v0.10-7f43027`
+- 服务器源码：`7f43027 fix: polish gif gray-test wording`
+- Compose 镜像行：`amotoken/nova-image-studio:v0.10-7f43027`
+- 本机首页：`200`
+- 容器内访问爱词元主服务状态：`200`
+- 队列：空闲，`processingCount=0`、`queuedCount=0`、`remainingQueueSlots=40`
+- 端口：`127.0.0.1:3001->3000/tcp`
+- 公网 `3001`：TCP 连接失败，符合预期
+- `https://img.amotoken.cc/`：未带 Basic Auth 返回 `401`
+- Nova 内存：约 `18.84MiB / 1.918GiB`
+- NewAPI 容器内存：约 `55.95MiB / 1.918GiB`
+- 根分区：约 `39G` 总量，`6.6G` 可用，使用率约 `83%`
+- Nova 数据目录：约 `20M`，共 `49` 个文件
+- 提示词图片缓存：`46` 个文件，约 `16M`，未见无上限膨胀
+- 任务数据库 WAL：约 `4.1M`
+- Docker build cache：约 `15.65GB` 可回收，仍只记录告警，不自动清理
+- 日志：启动正常，未见失败堆积或缓存错误
