@@ -299,3 +299,13 @@ v0.10 变化：
 - 提示词图片缓存：`46` 个文件，约 `16M`，未见膨胀
 - Docker build cache：约 `15.6GB` 可回收；本次仍未自动清理，若后续部署空间紧张再确认后处理。
 - 部署包检查：新设置页文案 `爱词元生图服务已预置完成` 已在前端包中，旧文案 `后端会自动连接` 不存在。
+
+2026-07-09 追加运行状态告警阈值：
+
+- `scripts/collect-nova-runtime.ps1` 新增 `Runtime Warnings` 段，只读输出资源风险，不执行清理。
+- 默认阈值：根分区使用率 `>=85%`、根分区可用空间 `<=5GB`、Docker build cache 可回收 `>=12GB`、提示词图片缓存 `>=512MB`。
+- 提示词图片缓存告警按 `prompt-gallery-images`、`prompt-gallery-cache`、`prompt-image-cache` 多目录总量计算，避免后续目录拆分时漏报。
+- 当前服务器触发 `runtime_warning=build_cache_reclaimable value=15.6GB threshold=12GB action=confirm_before_docker_builder_prune`。
+- 提示词图片缓存仍约 `16M`，没有触发缓存膨胀告警。
+- 清理 Docker build cache 属于可恢复构建缓存清理，不涉及 `/root/new-api-data` 或 `/root/nova-image-studio/data`，但仍需人工确认后执行；本轮没有自动清理。
+- 本地新增 `scripts/test-collect-nova-runtime.ps1`，覆盖多个提示词缓存目录合计超过阈值时必须输出 `runtime_warning=prompt_gallery_cache`。

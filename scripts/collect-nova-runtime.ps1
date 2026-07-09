@@ -18,6 +18,14 @@ param(
 
   [int]$LogSinceMinutes = 30,
 
+  [int]$WarnDiskUsedPercent = 85,
+
+  [double]$WarnDiskAvailableGb = 5,
+
+  [double]$WarnBuildCacheReclaimableGb = 12,
+
+  [int]$WarnPromptCacheMb = 512,
+
   [string]$OutputPath = "",
 
   [switch]$NoLogs
@@ -39,9 +47,46 @@ set -u
 SINCE_MINUTES="${NOVA_LOG_SINCE_MINUTES:-30}"
 SKIP_LOGS="${NOVA_SKIP_LOGS:-0}"
 DATA_DIR="${NOVA_DATA_DIR:-/root/nova-image-studio/data}"
+WARN_DISK_USED_PERCENT="${NOVA_WARN_DISK_USED_PERCENT:-85}"
+WARN_DISK_AVAILABLE_GB="${NOVA_WARN_DISK_AVAILABLE_GB:-5}"
+WARN_BUILD_CACHE_RECLAIMABLE_GB="${NOVA_WARN_BUILD_CACHE_RECLAIMABLE_GB:-12}"
+WARN_PROMPT_CACHE_MB="${NOVA_WARN_PROMPT_CACHE_MB:-512}"
 
 section() {
   printf '\n## %s\n' "$1"
+}
+
+size_to_mb() {
+  awk -v raw="$1" 'BEGIN {
+    value = raw
+    gsub(/[[:space:]]/, "", value)
+    number = value
+    unit = value
+    gsub(/[A-Za-z]/, "", number)
+    gsub(/[0-9.]/, "", unit)
+    unit = toupper(unit)
+    if (number == "") {
+      print 0
+    } else if (unit ~ /^T/) {
+      printf "%.3f\n", number * 1024 * 1024
+    } else if (unit ~ /^G/) {
+      printf "%.3f\n", number * 1024
+    } else if (unit ~ /^M/) {
+      printf "%.3f\n", number
+    } else if (unit ~ /^K/) {
+      printf "%.3f\n", number / 1024
+    } else {
+      printf "%.6f\n", number / 1024 / 1024
+    }
+  }'
+}
+
+number_ge() {
+  awk -v left="$1" -v right="$2" 'BEGIN { exit !(left + 0 >= right + 0) }'
+}
+
+number_le() {
+  awk -v left="$1" -v right="$2" 'BEGIN { exit !(left + 0 <= right + 0) }'
 }
 
 echo "# Nova Runtime Snapshot"
@@ -88,8 +133,19 @@ fi
 
 section "Disk"
 df -h / || true
+DISK_LINE="$(df -h / | awk 'NR==2 {print}')"
+DISK_USED_PERCENT="$(printf '%s\n' "$DISK_LINE" | awk '{gsub(/%/, "", $5); print $5}')"
+DISK_AVAILABLE_RAW="$(printf '%s\n' "$DISK_LINE" | awk '{print $4}')"
+DISK_AVAILABLE_MB="$(size_to_mb "$DISK_AVAILABLE_RAW")"
+BUILD_CACHE_RECLAIMABLE_RAW=""
+BUILD_CACHE_RECLAIMABLE_MB="0"
 if command -v docker >/dev/null 2>&1; then
-  docker system df || true
+  DOCKER_SYSTEM_DF="$(docker system df || true)"
+  printf '%s\n' "$DOCKER_SYSTEM_DF"
+  BUILD_CACHE_RECLAIMABLE_RAW="$(printf '%s\n' "$DOCKER_SYSTEM_DF" | awk '$1 == "Build" && $2 == "Cache" { print $6; exit }')"
+  if [ -n "$BUILD_CACHE_RECLAIMABLE_RAW" ]; then
+    BUILD_CACHE_RECLAIMABLE_MB="$(size_to_mb "$BUILD_CACHE_RECLAIMABLE_RAW")"
+  fi
 fi
 
 section "Nova Data"
@@ -102,14 +158,41 @@ else
 fi
 
 section "Prompt Gallery Cache"
+PROMPT_CACHE_TOTAL_MB=0
 for dir in "$DATA_DIR/prompt-gallery-images" "$DATA_DIR/prompt-gallery-cache" "$DATA_DIR/prompt-image-cache"; do
   if [ -d "$dir" ]; then
     echo "cache_dir=$dir"
     du -sh "$dir" 2>/dev/null || true
+    PROMPT_CACHE_DIR_MB="$(find "$dir" -type f -printf '%s\n' 2>/dev/null | awk '{sum += $1} END {printf "%.3f\n", sum / 1024 / 1024}')"
+    PROMPT_CACHE_TOTAL_MB="$(awk -v total="$PROMPT_CACHE_TOTAL_MB" -v current="$PROMPT_CACHE_DIR_MB" 'BEGIN { printf "%.3f\n", total + current }')"
     echo "cache_file_count=$(find "$dir" -type f | wc -l)"
     find "$dir" -type f -printf '%s %p\n' | sort -nr | head -10
   fi
 done
+
+section "Runtime Warnings"
+WARNING_COUNT=0
+if [ -n "$DISK_USED_PERCENT" ] && number_ge "$DISK_USED_PERCENT" "$WARN_DISK_USED_PERCENT"; then
+  echo "runtime_warning=disk_used_percent value=${DISK_USED_PERCENT}% threshold=${WARN_DISK_USED_PERCENT}%"
+  WARNING_COUNT=$((WARNING_COUNT + 1))
+fi
+WARN_DISK_AVAILABLE_MB="$(awk -v gb="$WARN_DISK_AVAILABLE_GB" 'BEGIN { printf "%.3f\n", gb * 1024 }')"
+if number_le "$DISK_AVAILABLE_MB" "$WARN_DISK_AVAILABLE_MB"; then
+  echo "runtime_warning=disk_available value=${DISK_AVAILABLE_RAW} threshold=${WARN_DISK_AVAILABLE_GB}GB"
+  WARNING_COUNT=$((WARNING_COUNT + 1))
+fi
+WARN_BUILD_CACHE_RECLAIMABLE_MB="$(awk -v gb="$WARN_BUILD_CACHE_RECLAIMABLE_GB" 'BEGIN { printf "%.3f\n", gb * 1024 }')"
+if number_ge "$BUILD_CACHE_RECLAIMABLE_MB" "$WARN_BUILD_CACHE_RECLAIMABLE_MB"; then
+  echo "runtime_warning=build_cache_reclaimable value=${BUILD_CACHE_RECLAIMABLE_RAW:-0B} threshold=${WARN_BUILD_CACHE_RECLAIMABLE_GB}GB action=confirm_before_docker_builder_prune"
+  WARNING_COUNT=$((WARNING_COUNT + 1))
+fi
+if number_ge "$PROMPT_CACHE_TOTAL_MB" "$WARN_PROMPT_CACHE_MB"; then
+  echo "runtime_warning=prompt_gallery_cache value=${PROMPT_CACHE_TOTAL_MB}MB threshold=${WARN_PROMPT_CACHE_MB}MB"
+  WARNING_COUNT=$((WARNING_COUNT + 1))
+fi
+if [ "$WARNING_COUNT" -eq 0 ]; then
+  echo "runtime_warning=none"
+fi
 
 section "Task Database"
 if [ -d "$DATA_DIR" ]; then
@@ -148,7 +231,7 @@ if (-not [string]::IsNullOrWhiteSpace($IdentityFile)) {
 $skipLogsValue = if ($NoLogs.IsPresent) { "1" } else { "0" }
 $normalizedRemoteScript = $remoteScript -replace "`r`n", "`n"
 $remotePayload = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($normalizedRemoteScript))
-$remoteCommand = "NOVA_LOG_SINCE_MINUTES=$LogSinceMinutes NOVA_SKIP_LOGS=$skipLogsValue bash -c 'base64 --ignore-garbage -d | bash -s'"
+$remoteCommand = "NOVA_LOG_SINCE_MINUTES=$LogSinceMinutes NOVA_SKIP_LOGS=$skipLogsValue NOVA_WARN_DISK_USED_PERCENT=$WarnDiskUsedPercent NOVA_WARN_DISK_AVAILABLE_GB=$WarnDiskAvailableGb NOVA_WARN_BUILD_CACHE_RECLAIMABLE_GB=$WarnBuildCacheReclaimableGb NOVA_WARN_PROMPT_CACHE_MB=$WarnPromptCacheMb bash -c 'base64 --ignore-garbage -d | bash -s'"
 
 $output = $remotePayload | & ssh @sshArgs $SshTarget $remoteCommand 2>&1
 $exitCode = $LASTEXITCODE
