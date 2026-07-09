@@ -75,7 +75,7 @@ export function useServerTaskPolling(
         if (task.status === 'failed' || task.status === 'expired') {
           const { terminal } = classifyTaskFailure(task);
           const message = task.error || task.warning
-            || (task.status === 'expired' ? '该任务已超出取回时间' : '后端任务失败');
+            || (task.status === 'expired' ? '该任务已超出取回时间' : '生图任务失败');
           void actions.failJob(jobId, message, { terminal });
           return;
         }

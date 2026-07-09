@@ -271,3 +271,15 @@ v0.10 变化：
 - 脚本已在当前生产服务器只读试跑通过；报告输出目录 `output/` 已被 `.gitignore` 忽略。
 - 本次脚本快照显示：当前镜像仍为 `amotoken/nova-image-studio:v0.10-9ea12df`，Nova 端口仍为 `127.0.0.1:3001->3000/tcp`，Nova 内存约 `22.03MiB / 1.918GiB`，提示词图片缓存仍为 `46` 个文件、约 `16M`，队列空闲。
 - `docker system df` 显示 Docker build cache 约 `14.17GB` 可回收；当前根分区仍有约 `8.0G` 可用，暂不自动清理，后续若部署空间紧张再人工确认后处理。
+
+2026-07-09 追加用户可见失败文案收口：
+
+- 审计前端用户可见路径，发现 `后端任务失败`、`后端未返回图片`、`后端返回的图片为空`、`创建任务失败：后端未返回任务 ID` 等极端失败文案可能透出技术词。
+- 已统一改为 `生图任务失败`、`生图服务未返回图片`、`生图服务返回的图片为空`、`创建任务失败：生图服务未返回任务编号`。
+- 设置页 `连接 AmoToken` 辅助文案从“后端会自动连接爱词元生图服务”改为“爱词元生图服务已预置完成”，避免普通用户看到内部实现词。
+- 新增 `frontend/src/lib/__tests__/ccode-task-client.test.ts`，并补强 `task-failure` 文案清洗测试。
+- 本地验证命令：
+  - `npm.cmd run test:run -- src/lib/__tests__/task-failure.test.ts src/lib/__tests__/ccode-task-client.test.ts src/lib/__tests__/workspace-task-service.test.ts src/components/workspace/results/__tests__/HistoryJobList.test.tsx src/components/workspace/results/__tests__/CompletedJobCard.test.tsx src/components/__tests__/ImageGenerationWorkbench.test.tsx`
+  - `npx.cmd eslint src/lib/task-failure.ts src/lib/ccode-task-client.ts src/lib/__tests__/task-failure.test.ts src/lib/__tests__/ccode-task-client.test.ts src/hooks/useAgentChat.ts src/hooks/useGifWorkflow.ts src/hooks/useServerTaskPolling.ts src/lib/workspace-task-service.ts src/components/SettingsModal.tsx`
+  - `npm.cmd run build`
+- 验证结果：相关 `6` 个测试文件、`48` 条测试均通过；targeted eslint 无报错；Next 生产构建通过。

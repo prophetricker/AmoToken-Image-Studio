@@ -39,6 +39,10 @@ export function sanitizeUserFacingFailureText(value: string | undefined): string
     .replace(/上游生成/g, '生图服务')
     .replace(/上游连接/g, '生图连接')
     .replace(/上游/g, '生图服务')
+    .replace(/后端任务/g, '生图任务')
+    .replace(/后端未返回/g, '生图服务未返回')
+    .replace(/后端返回/g, '生图服务返回')
+    .replace(/后端/g, '生图服务')
     .replace(/以\s+爱词元记录/g, '以爱词元记录')
     .replace(/\s+/g, ' ')
     .trim();

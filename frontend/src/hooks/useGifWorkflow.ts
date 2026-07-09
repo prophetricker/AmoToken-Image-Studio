@@ -146,7 +146,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
       persistJob({
         ...target,
         status: 'failed',
-        error: '后端返回的图片为空',
+        error: '生图服务返回的图片为空',
         updatedAt: nowIso(),
       });
       return;
@@ -200,7 +200,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
         return;
       }
       if (task.status === 'failed' || task.status === 'expired') {
-        const errorMessage = getUserFacingFailureMessage(task.error || task.warning || (task.status === 'expired' ? '该任务已超出取回时间' : '后端任务失败'));
+        const errorMessage = getUserFacingFailureMessage(task.error || task.warning || (task.status === 'expired' ? '该任务已超出取回时间' : '生图任务失败'));
         persistJob({
           ...current,
           status: 'failed',
@@ -242,7 +242,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
           if (task.status === 'completed') {
             void finalizeGrid(current, task.result?.images || [], initial.serverTaskId!);
           } else if (task.status === 'failed' || task.status === 'expired') {
-            const errorMessage = getUserFacingFailureMessage(task.error || (task.status === 'expired' ? '该任务已超出取回时间' : '后端任务失败'));
+            const errorMessage = getUserFacingFailureMessage(task.error || (task.status === 'expired' ? '该任务已超出取回时间' : '生图任务失败'));
             persistJob({
               ...current,
               status: 'failed',
@@ -469,7 +469,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
         onStatus?.('生成完成，正在下载图片…');
         await finalizeGrid(current, task.result?.images || [], current.serverTaskId);
       } else if (task.status === 'failed' || task.status === 'expired') {
-        const errorMsg = getUserFacingFailureMessage(task.error || (task.status === 'expired' ? '该任务已超出取回时间' : '后端任务失败'));
+        const errorMsg = getUserFacingFailureMessage(task.error || (task.status === 'expired' ? '该任务已超出取回时间' : '生图任务失败'));
         persistJob({
           ...current,
           status: 'failed',

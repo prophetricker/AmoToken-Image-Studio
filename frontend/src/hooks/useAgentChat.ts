@@ -369,7 +369,7 @@ export function useAgentChat() {
     };
     registerImage(record);
     return record;
-  }, [nextImgId, registerImage]);
+  }, [getAgentTextModelConfig, nextImgId, registerImage]);
 
   /** 重新生成已有图片的描述 */
   const redescribeImage = useCallback(async (imgId: string): Promise<string> => {
@@ -708,7 +708,7 @@ export function useAgentChat() {
       const task = await pollTask(data.taskId);
       if (!mountedRef.current) return;
       const allImages = task.result?.images;
-      if (!allImages || allImages.length === 0) throw new Error('后端未返回图片');
+      if (!allImages || allImages.length === 0) throw new Error('生图服务未返回图片');
 
       await processGeneratedTask(allImages, {
         taskId: data.taskId,
@@ -867,7 +867,7 @@ export function useAgentChat() {
       const task = await pollTask(taskId);
       if (!mountedRef.current) return;
       const allImages = task.result?.images;
-      if (!allImages || allImages.length === 0) throw new Error('后端未返回图片');
+      if (!allImages || allImages.length === 0) throw new Error('生图服务未返回图片');
 
       await processGeneratedTask(allImages, {
         taskId,

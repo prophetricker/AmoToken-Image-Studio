@@ -164,7 +164,7 @@ function getCompletionMetadata(job: StoredJob): Pick<StoredJob, 'completedAt' | 
 }
 
 function buildFailedJobFromTask(job: StoredJob, task: NovaTaskResponse): StoredJob {
-  const error = task.error || (task.status === 'expired' ? '该任务已超出取回时间' : '后端任务失败');
+  const error = task.error || (task.status === 'expired' ? '该任务已超出取回时间' : '生图任务失败');
   const classification = classifyFailureFromMessage(error);
   const display = getTaskFailureDisplayInfo(error);
 

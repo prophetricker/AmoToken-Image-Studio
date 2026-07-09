@@ -165,6 +165,12 @@ describe('sanitizeUserFacingFailureText', () => {
     expect(message).toContain('503');
     expect(message).not.toContain('API');
   });
+
+  it('hides backend wording from user-facing task errors', () => {
+    expect(sanitizeUserFacingFailureText('后端任务失败')).toBe('生图任务失败');
+    expect(getUserFacingFailureMessage('后端未返回图片')).toBe('生图失败：生图服务未返回图片');
+    expect(getUserFacingFailureMessage('后端返回的图片为空')).toBe('生图失败：生图服务返回的图片为空');
+  });
 });
 
 describe('getUserFacingFailureMessage', () => {

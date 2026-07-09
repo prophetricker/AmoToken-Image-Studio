@@ -193,7 +193,7 @@ export async function createNovaTask(input: CreateNovaTaskInput): Promise<string
     body: JSON.stringify(input),
   }, CREATE_TASK_TIMEOUT);
   const data = await parseTaskResponse<CreateTaskResponse>(response);
-  if (!data?.taskId) throw new Error('创建任务失败：后端未返回任务 ID');
+  if (!data?.taskId) throw new Error('创建任务失败：生图服务未返回任务编号');
   return data.taskId;
 }
 
