@@ -17,6 +17,7 @@ import { GifModeChoiceDialog } from '@/components/GifModeChoiceDialog';
 import { GifFrameTuner } from '@/components/GifFrameTuner';
 import { prepareUploadImage, getOptimizationBadge } from '@/lib/upload-image-cache';
 import { extractGridCells, type ExtractedGrid } from '@/lib/gif-encoder';
+import { estimateImageCost, formatCostEstimate } from '@/lib/image-cost-estimator';
 import {
   DEFAULT_GPT_IMAGE_ADVANCED_PARAMS,
   getGptImageAdvancedParamsForModel,
@@ -435,6 +436,13 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
     };
   }, [workflow.gridImageUrl, workflow.job]);
 
+  const gridCostEstimate = useMemo(() => estimateImageCost({
+    mode: 'image-to-image',
+    outputSize: '2K',
+    count: 1,
+    referenceImageCount: 1 + refFiles.length,
+  }), [refFiles.length]);
+
   return (
     <div ref={dropRef} className="space-y-4">
       <div className={cn(
@@ -513,6 +521,9 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
         系统会自动把生成网格图并切片为GIF，搭配你填写的主题与可选的参考图，生成 3×4 = 12 帧的网格底图，再在本地切片合成 GIF。
         网格图分辨率固定为 3264×2448（单帧 816×816 正方形），仅显示支持 4K 自定义分辨率的 image 系列模型。
         banana 系列不支持当前动图网格所需的自定义分辨率，因此这里不提供选择。
+      </p>
+      <p className="text-xs text-muted-foreground leading-relaxed">
+        预估费用：网格图生成 {formatCostEstimate(gridCostEstimate)}；GIF 合成在浏览器本地完成，不额外扣费；实际以爱词元记录为准。
       </p>
 
       {previewOpen && workflow.gridImageUrl && createPortal(

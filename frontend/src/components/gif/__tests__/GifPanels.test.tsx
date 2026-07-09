@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { GifGenerationWorkspace } from '@/components/GifGenerationWorkspace';
 import { GifParametersPanel } from '@/components/gif/GifParametersPanel';
 import { GifReviewPanel } from '@/components/gif/GifReviewPanel';
 import type { ActiveGifJob } from '@/lib/gif-job-store';
@@ -92,6 +93,21 @@ describe('GIF gray-test panels', () => {
 
     expect(screen.getByText('生图失败')).toBeInTheDocument();
     expect(screen.queryByText('任务失败')).not.toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/上游|NewAPI|Upstream/);
+  });
+
+  it('explains GIF grid cost without implying local GIF encoding is charged', () => {
+    const { container } = render(
+      <GifGenerationWorkspace
+        hasApiKey={false}
+        onConfigureApiKey={vi.fn()}
+        onError={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/预估费用/)).toHaveTextContent('网格图');
+    expect(screen.getByText(/预估费用/)).toHaveTextContent('GIF 合成在浏览器本地完成，不额外扣费');
+    expect(screen.getByText(/实际以爱词元记录为准/)).toBeInTheDocument();
     expect(container.textContent).not.toMatch(/上游|NewAPI|Upstream/);
   });
 });

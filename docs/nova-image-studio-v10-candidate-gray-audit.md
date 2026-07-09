@@ -412,3 +412,16 @@ v0.10 变化：
 - 任务数据库 WAL：约 `4.1M`
 - Docker build cache：约 `14.31GB` 可回收，仍只记录告警，不自动清理
 - 日志：启动正常，未见失败堆积或缓存错误
+
+2026-07-09 追加 GIF 费用说明回归：
+
+- GIF 工作区新增费用说明：网格图生成展示预估费用，GIF 合成在浏览器本地完成，不额外扣费，实际以爱词元记录为准。
+- 预估复用现有灰测费用表，不引入新正式计费规则。
+- 无额外参考图时，GIF 网格图按一次 `2K` 图生图预估；增加参考图时，按参考图数量自动切到多图融合预估区间。
+- 新增 `GifGenerationWorkspace` UI 用例，锁定 GIF 费用说明不暴露 `上游`、`NewAPI` 或 `Upstream`。
+- 本地验证命令：
+  - `npm.cmd run test:run -- src/components/gif/__tests__/GifPanels.test.tsx`
+  - `npm.cmd run test:run -- src/components/gif/__tests__/GifPanels.test.tsx src/lib/__tests__/image-cost-estimator.test.ts src/lib/__tests__/gif-job-store.test.ts src/components/workspace/__tests__/WorkspaceModeTabs.test.tsx src/components/__tests__/ImageGenerationWorkbench.test.tsx src/components/canvas/__tests__/canvas-generation-service.test.ts src/components/canvas/components/__tests__/CanvasNode.test.tsx`
+  - `npx.cmd eslint src/components/GifGenerationWorkspace.tsx src/components/gif/__tests__/GifPanels.test.tsx src/lib/image-cost-estimator.ts src/lib/__tests__/image-cost-estimator.test.ts src/components/gif/GifParametersPanel.tsx src/components/gif/GifReviewPanel.tsx`
+  - `npm.cmd run build`
+- 验证结果：相关 `7` 个测试文件、`23` 条测试通过；targeted eslint 无报错；Next 生产构建通过。测试中仍有既有 React `act(...)` 警告，但退出码为 0。
