@@ -166,6 +166,7 @@ const PROMPT_IMAGE_FETCH_TIMEOUT_MS = Math.max(5000, Number(process.env.NOVA_PRO
 const PROMPT_IMAGE_MAX_BYTES = Math.max(1024 * 1024, Number(process.env.NOVA_PROMPT_IMAGE_MAX_BYTES || 8 * 1024 * 1024));
 const PROMPT_IMAGE_CACHE_MAX_BYTES = Math.max(32 * 1024 * 1024, Number(process.env.NOVA_PROMPT_IMAGE_CACHE_MAX_BYTES || 512 * 1024 * 1024));
 const taskRefImages = new Map();
+let promptImageCacheDirLogged = false;
 
 const app = IS_DEV ? next({ dev: IS_DEV, hostname: HOSTNAME, port: PORT, dir: path.join(__dirname, '..', 'frontend') }) : null;
 const handle = app ? app.getRequestHandler() : null;
@@ -415,7 +416,10 @@ function ensurePromptImageCacheDir() {
     if (!fs.existsSync(PROMPT_IMAGE_CACHE_DIR)) {
       fs.mkdirSync(PROMPT_IMAGE_CACHE_DIR, { recursive: true });
     }
-    console.log(`[prompt-gallery-cache] cache dir: ${PROMPT_IMAGE_CACHE_DIR}`);
+    if (!promptImageCacheDirLogged) {
+      console.log(`[prompt-gallery-cache] cache dir: ${PROMPT_IMAGE_CACHE_DIR}`);
+      promptImageCacheDirLogged = true;
+    }
   } catch (error) {
     console.error(`[prompt-gallery-cache] unable to create cache dir: ${PROMPT_IMAGE_CACHE_DIR}`, error);
   }
