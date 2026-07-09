@@ -392,3 +392,23 @@ v0.10 变化：
   - `npx.cmd eslint src/components/canvas/canvas-generation-service.ts src/components/canvas/components/canvas-node.tsx src/components/canvas/__tests__/canvas-generation-service.test.ts src/components/canvas/components/__tests__/CanvasNode.test.tsx`
   - `npm.cmd run build`
 - 验证结果：相关 `7` 个测试文件、`41` 条测试通过；触及文件 targeted eslint 无报错；Next 生产构建通过。测试中仍有既有 React `act(...)` 警告，但退出码为 0。
+
+2026-07-09 部署 `530879e` 后验证：
+
+- 当前镜像：`amotoken/nova-image-studio:v0.10-530879e`
+- 服务器源码：`530879e fix: align canvas gray-test wording`
+- Compose 镜像行：`amotoken/nova-image-studio:v0.10-530879e`
+- 本机首页：`200`
+- 容器内访问爱词元主服务状态：`200`
+- 队列：空闲，`processingCount=0`、`queuedCount=0`、`remainingQueueSlots=40`
+- 端口：`127.0.0.1:3001->3000/tcp`
+- 公网 `3001`：TCP 连接失败，符合预期
+- `https://img.amotoken.cc/`：未带 Basic Auth 返回 `401`
+- Nova 内存：约 `20.3MiB / 1.918GiB`
+- NewAPI 容器内存：约 `117.4MiB / 1.918GiB`
+- 根分区：约 `39G` 总量，`7.9G` 可用，使用率约 `79%`
+- Nova 数据目录：约 `20M`，共 `49` 个文件
+- 提示词图片缓存：`46` 个文件，约 `16M`，未见无上限膨胀
+- 任务数据库 WAL：约 `4.1M`
+- Docker build cache：约 `14.31GB` 可回收，仍只记录告警，不自动清理
+- 日志：启动正常，未见失败堆积或缓存错误
