@@ -237,3 +237,16 @@ v0.10 变化：
 - 提示词图片缓存：`46` 个文件，约 `16M`
 - `nova-images`：约 `4K`
 - 图片代理路径触发后，`[prompt-gallery-cache] cache dir` 日志计数仍为 `1`，日志降噪生效。
+
+2026-07-09 追加 4K/GIF 参数链路验证：
+
+- 新增 `frontend/src/lib/__tests__/model-capabilities.test.ts`，锁定候选 4K 模型和 GIF 网格尺寸的边界。
+- 4K 灰测模型仍由稳定 `AmoToken GPT Image 2` 运行态派生，普通用户默认不可见，关闭候选开关后不会保存在模型注册表里。
+- `gpt-image-2` 的 4K 固定比例只暴露当前尺寸包络内可用的 `16:9`、`9:16`、`21:9`，不会暴露无效的 `1:1` 4K。
+- 2K 仍保留较宽的布局选择，避免影响普通灰测链路和回退体验。
+- GIF 网格使用的 `3264x2448` 自定义尺寸通过前端尺寸限制；`4096x4096` 这类超出当前自定义尺寸包络的方图会被拒绝。
+- 本地验证命令：
+  - `npm.cmd run test:run -- src/lib/__tests__/model-capabilities.test.ts`
+  - `npm.cmd run test:run -- src/lib/__tests__/model-capabilities.test.ts src/lib/__tests__/gif-job-store.test.ts src/lib/__tests__/nova-models.test.ts src/lib/__tests__/image-cost-estimator.test.ts src/lib/__tests__/server-gpt-image-params.test.ts`
+  - `npx.cmd eslint src/lib/model-capabilities.ts src/lib/__tests__/model-capabilities.test.ts src/lib/gif-job-store.ts src/lib/nova-models.ts`
+- 验证结果：相关 `5` 个测试文件、`25` 条测试均通过；targeted eslint 无报错。
