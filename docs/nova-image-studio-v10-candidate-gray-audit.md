@@ -220,3 +220,20 @@ v0.10 变化：
 - 观察到提示词图片代理每次访问都会打印 `[prompt-gallery-cache] cache dir`。
 - 该日志不是功能错误，但长期运行会干扰排查并增加 Docker 日志增长。
 - 已改为目录可用后只在首次成功时打印一次；后续访问仍保留目录存在性检查、缓存上限和清理策略。
+
+2026-07-09 部署 `9ea12df` 后验证：
+
+- 当前镜像：`amotoken/nova-image-studio:v0.10-9ea12df`
+- 服务器源码：`9ea12df`
+- Compose 镜像行：`amotoken/nova-image-studio:v0.10-9ea12df`
+- 本机首页：`200`
+- 队列：空闲，`processing=0`，`queued=0`
+- 端口：`127.0.0.1:3001->3000/tcp`
+- 公网 `3001`：连接失败，符合预期
+- `https://img.amotoken.cc/`：未带 Basic Auth 返回 `401`
+- Nova 内存：约 `18-50MiB / 1.918GiB`
+- NewAPI 容器内存：约 `55MiB / 1.918GiB`
+- 根分区：约 `39G` 总量，`8.0G` 可用，使用率约 `79%`
+- 提示词图片缓存：`46` 个文件，约 `16M`
+- `nova-images`：约 `4K`
+- 图片代理路径触发后，`[prompt-gallery-cache] cache dir` 日志计数仍为 `1`，日志降噪生效。
