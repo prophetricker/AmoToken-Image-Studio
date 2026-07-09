@@ -7,6 +7,7 @@
  */
 import { ackNovaTask, createNovaTask, getNovaTask, resolveImageTaskProvider, type NovaTaskResponse, type NovaTaskStatus, type ImageReference } from "@/lib/ccode-task-client";
 import { normalizeModel } from "@/lib/model-capabilities";
+import { getUserFacingFailureMessage } from "@/lib/task-failure";
 import { compressReferenceDataUrl } from "./lib/image-utils";
 import { uploadImage } from "./lib/image-storage";
 import type { CanvasGenerationConfig } from "./types";
@@ -91,7 +92,7 @@ export async function pollNodeTask(
     if (task.status === "completed" || task.status === "failed" || task.status === "expired") {
       const images = task.result?.images || [];
       if (task.status !== "completed" || images.length === 0) {
-        throw new Error(task.error || (task.status === "expired" ? "该任务已超出取回时间" : "生成失败"));
+        throw new Error(getUserFacingFailureMessage(task.error || (task.status === "expired" ? "该任务已超出取回时间" : "生成失败")));
       }
       const stored = (await Promise.all(images.map(storeResultImage))).filter((item): item is CanvasGeneratedImage => Boolean(item));
       void ackNovaTask(taskId);
@@ -112,7 +113,7 @@ export async function checkExistingTask(taskId: string): Promise<{ status: NovaT
     return { status: "completed", images: stored };
   }
   if (task.status === "failed" || task.status === "expired") {
-    return { status: task.status, error: task.error || (task.status === "expired" ? "该任务已超出取回时间" : "生成失败") };
+    return { status: task.status, error: getUserFacingFailureMessage(task.error || (task.status === "expired" ? "该任务已超出取回时间" : "生成失败")) };
   }
   return { status: task.status };
 }

@@ -28,6 +28,7 @@ export interface TaskFailureDisplayInfo {
 export function sanitizeUserFacingFailureText(value: string | undefined): string {
   return String(value || '')
     .replace(/API 请求失败:\s*502\s*Upstream request failed/gi, '生图失败：服务暂时无法完成这次生成')
+    .replace(/API 请求失败:\s*(\d{3})\s*/gi, '生图失败：服务返回 $1 ')
     .replace(/502\s*Upstream request failed/gi, '生图失败：服务暂时无法完成这次生成')
     .replace(/Upstream request failed/gi, '生图失败：服务暂时无法完成这次生成')
     .replace(/NewAPI\/上游日志/g, '爱词元记录')
@@ -38,7 +39,27 @@ export function sanitizeUserFacingFailureText(value: string | undefined): string
     .replace(/上游生成/g, '生图服务')
     .replace(/上游连接/g, '生图连接')
     .replace(/上游/g, '生图服务')
-    .replace(/以\s+爱词元记录/g, '以爱词元记录');
+    .replace(/以\s+爱词元记录/g, '以爱词元记录')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function getUserFacingFailureMessage(value: string | undefined, fallback = '生图失败'): string {
+  const sanitized = sanitizeUserFacingFailureText(value);
+  if (!sanitized) return fallback;
+  if (
+    sanitized.startsWith('生图失败')
+    || sanitized.startsWith('任务失败')
+    || sanitized.startsWith('请求可能')
+    || sanitized.startsWith('可能触发')
+    || sanitized.startsWith('网络')
+    || sanitized.startsWith('当前队列')
+    || sanitized.startsWith('服务重启')
+    || sanitized.startsWith('任务已过期')
+  ) {
+    return sanitized;
+  }
+  return `${fallback}：${sanitized}`;
 }
 
 const SERVER_RESTART_MARKERS = [

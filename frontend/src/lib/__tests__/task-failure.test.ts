@@ -4,6 +4,7 @@ import {
   classifyFailureFromMessage,
   getSensitivePromptWarning,
   getTaskFailureDisplayInfo,
+  getUserFacingFailureMessage,
   sanitizeUserFacingFailureText,
 } from '@/lib/task-failure';
 import type { NovaTaskResponse } from '@/lib/ccode-task-client';
@@ -156,5 +157,25 @@ describe('sanitizeUserFacingFailureText', () => {
     expect(sanitizeUserFacingFailureText('API 请求失败: 502 Upstream request failed')).toBe('生图失败：服务暂时无法完成这次生成');
     expect(sanitizeUserFacingFailureText('失败通常不扣费，最终以 NewAPI/上游日志为准。')).toBe('失败通常不扣费，最终以爱词元记录为准。');
     expect(sanitizeUserFacingFailureText('失败阶段：上游生成')).toBe('失败阶段：生图服务');
+  });
+
+  it('converts generic API failures to生图服务 wording', () => {
+    const message = sanitizeUserFacingFailureText('API 请求失败: 503 Service Unavailable');
+    expect(message).toContain('生图失败');
+    expect(message).toContain('503');
+    expect(message).not.toContain('API');
+  });
+});
+
+describe('getUserFacingFailureMessage', () => {
+  it('formats failed task toasts without duplicating生图失败', () => {
+    expect(getUserFacingFailureMessage('API 请求失败: 502 Upstream request failed')).toBe('生图失败：服务暂时无法完成这次生成');
+  });
+
+  it('removes internal wording from canvas and GIF raw errors', () => {
+    const message = getUserFacingFailureMessage('所有图片生成失败: 上游连接提前中断或超时，请稍后重试。');
+    expect(message).toContain('生图失败');
+    expect(message).not.toContain('上游');
+    expect(message).not.toContain('NewAPI');
   });
 });

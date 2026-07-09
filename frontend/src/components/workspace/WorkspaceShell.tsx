@@ -34,7 +34,7 @@ import {
 import { Shuffle, Settings, User, Wallpaper, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { getNovaTask } from '@/lib/ccode-task-client';
 import { finalizeCompletedServerTask } from '@/lib/workspace-task-service';
-import { classifyTaskFailure } from '@/lib/task-failure';
+import { classifyTaskFailure, getUserFacingFailureMessage } from '@/lib/task-failure';
 import { isCandidateMode, isCandidateModesEnabled, resolveCandidateModesEnabled } from '@/lib/candidate-capabilities';
 import type { RefImageData, StoredJob } from '@/lib/job-store';
 import { subscribeImageActionToasts, subscribeUseAsImageReference } from '@/lib/image-actions';
@@ -150,7 +150,7 @@ export function WorkspaceShell() {
         const message = task.error || task.warning
           || (task.status === 'expired' ? '该任务已超出取回时间' : '任务失败');
         void submitActions.failJob(job.id, message, { terminal });
-        showToast(`任务失败：${message}`, 'error');
+        showToast(getUserFacingFailureMessage(message), 'error');
       } else if (task.status === 'processing') {
         submitActions.replaceJob(job.id, cur => ({ ...cur, status: 'processing' }));
         showToast('任务正在生成中，请稍候…', 'info');

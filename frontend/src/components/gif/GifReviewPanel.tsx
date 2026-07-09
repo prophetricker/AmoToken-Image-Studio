@@ -23,6 +23,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ImageHoverActions } from '@/components/workspace/results/ImageHoverActions';
 import { cn } from '@/lib/utils';
 import { GIF_MAX_FRAME_PADDING, type ActiveGifJob, type GifStatus } from '@/lib/gif-job-store';
+import { getUserFacingFailureMessage } from '@/lib/task-failure';
 import type { ImageActionPayload } from '@/lib/image-actions';
 
 export interface GifReviewPanelProps {
@@ -283,7 +284,7 @@ export function GifReviewPanel(props: GifReviewPanelProps) {
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
             <div>
               <p className="font-medium">任务失败</p>
-              <p className="mt-1 text-xs">{props.job?.error || '未知错误'}</p>
+              <p className="mt-1 text-xs">{getUserFacingFailureMessage(props.job?.error, '未知错误')}</p>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">

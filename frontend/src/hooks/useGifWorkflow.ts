@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createNovaTask, getNovaTask, ackNovaTask, resolveImageTaskProvider, type ImageReference } from '@/lib/ccode-task-client';
 import { novaTaskSocket } from '@/lib/ccode-task-socket';
 import { generateUUID } from '@/lib/uuid';
+import { getUserFacingFailureMessage } from '@/lib/task-failure';
 import {
   downloadAndStoreImages,
   resolveStoredImageRef,
@@ -199,10 +200,11 @@ export function useGifWorkflow(): UseGifWorkflowResult {
         return;
       }
       if (task.status === 'failed' || task.status === 'expired') {
+        const errorMessage = getUserFacingFailureMessage(task.error || task.warning || (task.status === 'expired' ? '该任务已超出取回时间' : '后端任务失败'));
         persistJob({
           ...current,
           status: 'failed',
-          error: task.error || task.warning || (task.status === 'expired' ? '该任务已超出取回时间' : '后端任务失败'),
+          error: errorMessage,
           updatedAt: nowIso(),
         });
         clearSubscription();
@@ -240,10 +242,11 @@ export function useGifWorkflow(): UseGifWorkflowResult {
           if (task.status === 'completed') {
             void finalizeGrid(current, task.result?.images || [], initial.serverTaskId!);
           } else if (task.status === 'failed' || task.status === 'expired') {
+            const errorMessage = getUserFacingFailureMessage(task.error || (task.status === 'expired' ? '该任务已超出取回时间' : '后端任务失败'));
             persistJob({
               ...current,
               status: 'failed',
-              error: task.error || (task.status === 'expired' ? '该任务已超出取回时间' : '后端任务失败'),
+              error: errorMessage,
               updatedAt: nowIso(),
             });
           } else {
@@ -354,7 +357,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
       persistJob(withTaskId);
       subscribeServerTask(serverTaskId);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getUserFacingFailureMessage(error instanceof Error ? error.message : String(error));
       persistJob({
         ...next,
         status: 'failed',
@@ -466,7 +469,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
         onStatus?.('生成完成，正在下载图片…');
         await finalizeGrid(current, task.result?.images || [], current.serverTaskId);
       } else if (task.status === 'failed' || task.status === 'expired') {
-        const errorMsg = task.error || (task.status === 'expired' ? '该任务已超出取回时间' : '后端任务失败');
+        const errorMsg = getUserFacingFailureMessage(task.error || (task.status === 'expired' ? '该任务已超出取回时间' : '后端任务失败'));
         persistJob({
           ...current,
           status: 'failed',
@@ -483,13 +486,14 @@ export function useGifWorkflow(): UseGifWorkflowResult {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const errorMsg = getUserFacingFailureMessage(message);
       persistJob({
         ...current,
         status: 'failed',
-        error: message,
+        error: errorMsg,
         updatedAt: nowIso(),
       });
-      onStatus?.(`查询失败：${message}`);
+      onStatus?.(`查询失败：${errorMsg}`);
     } finally {
       setIsSyncing(false);
     }
