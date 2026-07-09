@@ -283,7 +283,7 @@ export function GifReviewPanel(props: GifReviewPanelProps) {
           <div className="flex items-start gap-2 text-sm text-destructive">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
             <div>
-              <p className="font-medium">任务失败</p>
+              <p className="font-medium">生图失败</p>
               <p className="mt-1 text-xs">{getUserFacingFailureMessage(props.job?.error, '未知错误')}</p>
             </div>
           </div>

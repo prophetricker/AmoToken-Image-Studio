@@ -70,12 +70,12 @@ export function GifParametersPanel(props: GifParametersPanelProps) {
           <Info className="h-5 w-5" />
         </div>
         <div className="max-w-md">
-          <p className="text-base font-medium text-foreground">需要先配置令牌</p>
+          <p className="text-base font-medium text-foreground">需要先配置 AmoToken 令牌</p>
           <p className="mt-2 text-sm text-muted-foreground">
-            请先在设置中配置 Nova API 密钥，才能使用动图生成功能。
+            请先粘贴 AmoToken 令牌，保存后即可使用动图生成功能。
           </p>
         </div>
-        <Button onClick={props.onConfigureApiKey}>配置</Button>
+        <Button onClick={props.onConfigureApiKey}>粘贴令牌</Button>
       </div>
     );
   }

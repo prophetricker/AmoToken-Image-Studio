@@ -346,3 +346,16 @@ v0.10 变化：
   - `npm.cmd run test:run -- src/lib/__tests__/candidate-capabilities.test.ts src/lib/__tests__/nova-models.test.ts src/lib/__tests__/model-capabilities.test.ts src/lib/__tests__/gif-job-store.test.ts src/components/workspace/__tests__/WorkspaceModeTabs.test.tsx src/components/__tests__/ImageGenerationWorkbench.test.tsx`
   - `npx.cmd eslint src/components/__tests__/ImageGenerationWorkbench.test.tsx src/components/ImageGenerationWorkbench.tsx src/lib/candidate-capabilities.ts src/lib/nova-models.ts src/lib/model-capabilities.ts src/lib/gif-job-store.ts src/components/workspace/WorkspaceModeTabs.tsx src/components/workspace/__tests__/WorkspaceModeTabs.test.tsx`
 - 验证结果：候选能力相关 `6` 个测试文件、`29` 条测试通过；targeted eslint 无报错。
+
+2026-07-09 追加 GIF 灰测用户文案回归：
+
+- 新增 `frontend/src/components/gif/__tests__/GifPanels.test.tsx`，锁定 GIF 灰测面板的用户侧口径。
+- GIF 未配置态从“Nova API 密钥”改为 “AmoToken 令牌”，按钮文案改为“粘贴令牌”。
+- GIF 失败面板标题统一为“生图失败”，避免候选功能里出现泛化的“任务失败”。
+- 502 等原始错误仍由 `getUserFacingFailureMessage` 清洗，不向用户暴露 `上游`、`NewAPI` 或 `Upstream`。
+- 本地验证命令：
+  - `npm.cmd run test:run -- src/components/gif/__tests__/GifPanels.test.tsx`
+  - `npm.cmd run test:run -- src/components/gif/__tests__/GifPanels.test.tsx src/lib/__tests__/candidate-capabilities.test.ts src/lib/__tests__/nova-models.test.ts src/lib/__tests__/model-capabilities.test.ts src/lib/__tests__/gif-job-store.test.ts src/components/workspace/__tests__/WorkspaceModeTabs.test.tsx src/components/__tests__/ImageGenerationWorkbench.test.tsx`
+  - `npx.cmd eslint src/components/gif/GifParametersPanel.tsx src/components/gif/GifReviewPanel.tsx src/components/gif/__tests__/GifPanels.test.tsx src/components/GifGenerationWorkspace.tsx src/hooks/useGifWorkflow.ts src/lib/gif-job-store.ts src/components/workspace/WorkspaceModeTabs.tsx`
+  - `npm.cmd run build`
+- 验证结果：候选能力相关 `7` 个测试文件、`31` 条测试通过；targeted eslint 无报错；Next 生产构建通过。测试中仍有既有 React `act(...)` 警告，但退出码为 0。
