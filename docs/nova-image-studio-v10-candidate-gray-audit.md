@@ -477,3 +477,16 @@ v0.10 变化：
 - 任务数据库 WAL：约 `4.1M`
 - Docker build cache：约 `14.33GB` 可回收，仍只记录告警，不自动清理
 - 日志：启动正常，未见失败堆积或缓存错误
+
+2026-07-09 追加 4K 灰测提醒回归：
+
+- 生图工作台在选择 `AmoToken GPT Image 2 4K 灰测` 且尺寸为 `4K` 时，显示紧凑的 `4K 灰测提醒`。
+- 提醒内容说明 4K 预计耗时更长、费用更高，建议先用 `1K` 或 `2K` 定稿后再升到 `4K`。
+- 提醒继续使用 `实际以爱词元记录为准` 的计费口径，不改变正式计费规则。
+- 普通 `AmoToken GPT Image 2`、普通 `1K/2K` 主链路不显示该提醒。
+- 本地验证命令：
+  - `npm.cmd run test:run -- src/components/__tests__/ImageGenerationWorkbench.test.tsx -t "shows a 4K gray-test notice"`
+  - `npm.cmd run test:run -- src/components/__tests__/ImageGenerationWorkbench.test.tsx src/lib/__tests__/model-capabilities.test.ts src/lib/__tests__/nova-models.test.ts src/lib/__tests__/image-cost-estimator.test.ts src/lib/__tests__/workspace-task-service.test.ts src/components/workspace/results/__tests__/CompletedJobCard.test.tsx src/components/workspace/results/__tests__/HistoryJobList.test.tsx`
+  - `npx.cmd eslint src/components/ImageGenerationWorkbench.tsx src/components/__tests__/ImageGenerationWorkbench.test.tsx src/lib/nova-models.ts src/lib/model-capabilities.ts src/lib/image-cost-estimator.ts`
+  - `npm.cmd run build`
+- 验证结果：相关 `7` 个测试文件、`39` 条测试通过；targeted eslint 无报错；Next 生产构建通过。测试中仍有既有 React `act(...)` 警告，但退出码为 0。

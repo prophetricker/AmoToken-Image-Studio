@@ -41,6 +41,7 @@ import type { ImageFormSettings } from '@/lib/form-settings';
 import type { ImageToImageSubmitInput, TextToImageSubmitInput } from '@/lib/workspace-task-service';
 import { estimateImageCost, formatCostEstimate } from '@/lib/image-cost-estimator';
 import { getSensitivePromptWarning } from '@/lib/task-failure';
+import { AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID } from '@/lib/nova-models';
 import { cn } from '@/lib/utils';
 
 const WORKBENCH_SETTINGS_KEY = 'nova-image-generation-settings';
@@ -182,6 +183,7 @@ export function ImageGenerationWorkbench({
     referenceImageCount: pendingFiles.length,
   }), [currentMode, outputSize, gptImageAdvancedParams.quality, parallelCount, pendingFiles.length]);
   const sensitivePromptWarning = useMemo(() => getSensitivePromptWarning(prompt), [prompt]);
+  const show4KGrayNotice = model === AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID && outputSize === '4K';
 
   const handleParamsChange = useCallback((patch: Partial<GenerationParamsValue>) => {
     if (patch.model !== undefined) setModel(patch.model);
@@ -745,6 +747,13 @@ export function ImageGenerationWorkbench({
                 实际扣费待爱词元记录核对
               </span>
             </div>
+
+            {show4KGrayNotice && (
+              <div className="mx-3 mb-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-5 text-warning sm:mx-4">
+                <p className="font-medium">4K 灰测提醒</p>
+                <p>预计耗时更长、费用更高，建议先用 1K 或 2K 定稿后再升到 4K；失败通常不扣费，实际以爱词元记录为准。</p>
+              </div>
+            )}
 
             {sensitivePromptWarning && (
               <div className="mx-3 mb-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning sm:mx-4">
