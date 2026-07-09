@@ -261,3 +261,13 @@ v0.10 变化：
 - 提示词图片缓存目录为 `/root/nova-image-studio/data/prompt-gallery-images`，约 `46` 个文件、`16M`，未见无上限膨胀。
 - 队列接口 `/api/nova/queue-status` 返回空闲：`processingCount=0`、`queuedCount=0`、`remainingQueueSlots=40`、`acceptingNewTasks=true`。
 - 最近 30 分钟 Nova 日志仅见启动、图片目录、提示词缓存目录、监听地址和内部 Base URL 配置日志，未见失败堆积或缓存错误。
+
+2026-07-09 追加只读运行状态采集脚本：
+
+- 新增 `scripts/collect-nova-runtime.ps1`，用于反复采集 Nova 灰测期间的服务器运行状态。
+- 脚本只读采集 Docker 容器、内存、端口、磁盘、Docker build cache、Nova 数据目录、提示词图片缓存、任务数据库文件、队列接口和最近 Nova 日志。
+- 脚本不写入服务器、不重启容器、不清理缓存、不保存密码或 Basic Auth。
+- Windows 本地建议用 `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\collect-nova-runtime.ps1 -SshTarget root@<server-ip> -IdentityFile "$env:USERPROFILE\.ssh\amotoken_nova_deploy" -OutputPath "output\nova-runtime-$(Get-Date -Format yyyyMMdd-HHmmss).md"` 运行。
+- 脚本已在当前生产服务器只读试跑通过；报告输出目录 `output/` 已被 `.gitignore` 忽略。
+- 本次脚本快照显示：当前镜像仍为 `amotoken/nova-image-studio:v0.10-9ea12df`，Nova 端口仍为 `127.0.0.1:3001->3000/tcp`，Nova 内存约 `22.03MiB / 1.918GiB`，提示词图片缓存仍为 `46` 个文件、约 `16M`，队列空闲。
+- `docker system df` 显示 Docker build cache 约 `14.17GB` 可回收；当前根分区仍有约 `8.0G` 可用，暂不自动清理，后续若部署空间紧张再人工确认后处理。
