@@ -404,7 +404,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
       triggerGifDownload(blob, `gif-${current.id}.gif`);
       updateJob(prev => ({ ...prev, status: 'done', updatedAt: nowIso() }));
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getUserFacingFailureMessage(error instanceof Error ? error.message : String(error));
       updateJob(prev => ({ ...prev, status: 'failed', error: message, updatedAt: nowIso() }));
     }
   }, [gridImageUrl, loadGridImageUrl, updateJob]);
@@ -432,7 +432,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
       triggerGifDownload(blob, `gif-${current.id}.gif`);
       updateJob(prev => ({ ...prev, status: 'done', updatedAt: nowIso() }));
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getUserFacingFailureMessage(error instanceof Error ? error.message : String(error));
       updateJob(prev => ({ ...prev, status: 'failed', error: message, updatedAt: nowIso() }));
     }
   }, [updateJob]);

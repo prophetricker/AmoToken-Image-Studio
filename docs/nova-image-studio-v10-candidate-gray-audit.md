@@ -444,3 +444,16 @@ v0.10 变化：
 - 任务数据库 WAL：约 `4.1M`
 - Docker build cache：约 `15.75GB` 可回收，仍只记录告警，不自动清理
 - 日志：启动正常，未见失败堆积或缓存错误
+
+2026-07-09 追加 GIF 合成失败文案回归：
+
+- 新增 `frontend/src/hooks/__tests__/useGifWorkflow.test.tsx`，直接覆盖 GIF 工作流 hook 的合成失败路径。
+- 自动合成 GIF 失败时，`API 请求失败: 502 Upstream request failed` 会被清洗成用户可见的 `生图失败` 口径。
+- 微调后合成 GIF 失败时，`上游连接提前中断或超时` 等内部词也会被清洗，不暴露 `上游`、`NewAPI` 或 `Upstream`。
+- 失败时不会触发 GIF 下载，避免用户误拿到空结果。
+- 本地验证命令：
+  - `npm.cmd run test:run -- src/hooks/__tests__/useGifWorkflow.test.tsx`
+  - `npm.cmd run test:run -- src/hooks/__tests__/useGifWorkflow.test.tsx src/components/gif/__tests__/GifPanels.test.tsx src/lib/__tests__/gif-job-store.test.ts src/lib/__tests__/task-failure.test.ts src/components/canvas/__tests__/canvas-generation-service.test.ts src/components/canvas/components/__tests__/CanvasNode.test.tsx src/components/workspace/__tests__/WorkspaceModeTabs.test.tsx`
+  - `npx.cmd eslint src/hooks/useGifWorkflow.ts src/hooks/__tests__/useGifWorkflow.test.tsx src/components/gif/__tests__/GifPanels.test.tsx src/lib/task-failure.ts src/lib/__tests__/task-failure.test.ts`
+  - `npm.cmd run build`
+- 验证结果：相关 `7` 个测试文件、`36` 条测试通过；targeted eslint 无报错；Next 生产构建通过。测试中仍有既有 React `act(...)` 警告，但退出码为 0。
