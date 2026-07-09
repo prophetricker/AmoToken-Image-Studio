@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { ImageGenerationWorkbench } from '../ImageGenerationWorkbench';
-import { AMOTOKEN_IMAGE_MODEL_ID, saveAmoTokenToken } from '@/lib/nova-models';
+import { AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID, AMOTOKEN_IMAGE_MODEL_ID, saveAmoTokenToken } from '@/lib/nova-models';
+import { CANDIDATE_MODES_STORAGE_KEY } from '@/lib/candidate-capabilities';
 import { syncDynamicModelExports } from '@/lib/gemini-config';
 
 const quickPrompts = [
@@ -127,6 +128,33 @@ describe('ImageGenerationWorkbench AmoToken setup', () => {
 
     await screen.findByAltText('ref-1.png');
     expect(screen.getByText(/预估费用/)).toHaveTextContent('约 ¥0.12-0.13');
+  });
+
+  it('exposes the 4K gray-test model and 4K size only after candidate modes are enabled', async () => {
+    saveAmoTokenToken('sk-test-token');
+    localStorage.setItem(CANDIDATE_MODES_STORAGE_KEY, 'enabled');
+    syncDynamicModelExports();
+
+    render(
+      <ImageGenerationWorkbench
+        onSubmitText={vi.fn()}
+        onSubmitImage={vi.fn()}
+        initialData={{
+          model: AMOTOKEN_IMAGE_MODEL_ID,
+          outputSize: '2K',
+        }}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /模型：AmoToken GPT Image 2/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'AmoToken GPT Image 2 4K 灰测' }));
+
+    expect(await screen.findByRole('button', { name: /模型：AmoToken GPT Image 2 4K 灰测/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '2K' }));
+
+    expect(screen.getByRole('button', { name: '4K' })).toBeInTheDocument();
+    expect(localStorage.getItem('nova-model-registry')).not.toContain(AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID);
   });
 
   it('shows wide mode generation guidance outside failed cards', async () => {

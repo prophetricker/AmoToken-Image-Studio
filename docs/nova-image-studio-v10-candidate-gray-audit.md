@@ -333,3 +333,16 @@ v0.10 变化：
 - 根分区：约 `39G` 总量，`7.9G` 可用，使用率约 `79%`
 - 提示词图片缓存：`46` 个文件，约 `16M`，未见膨胀
 - Docker build cache：约 `14.22GB` 可回收；仍只记录告警，不自动清理。
+
+2026-07-09 追加 4K 灰测入口 UI 回归验证：
+
+- 新增 `ImageGenerationWorkbench` UI 用例，覆盖候选开关开启后的真实工作台路径。
+- 默认普通入口仍不暴露 `AmoToken GPT Image 2 4K 灰测`；候选开关开启并保存 AmoToken 令牌后，模型下拉可选择 `AmoToken GPT Image 2 4K 灰测`。
+- 选择 4K 灰测模型后，尺寸菜单可见 `4K` 档位。
+- 运行态派生的 4K 灰测模型不会写回 `nova-model-registry`，关闭候选开关后不会污染普通用户配置。
+- 本地尝试用 Playwright CLI 做浏览器验证时，WSL 侧缺少 Chrome，`install-browser chrome` 超时；因此本轮采用 Testing Library UI 测试作为可重复的入口验证证据。
+- 本地验证命令：
+  - `npm.cmd run test:run -- src/components/__tests__/ImageGenerationWorkbench.test.tsx`
+  - `npm.cmd run test:run -- src/lib/__tests__/candidate-capabilities.test.ts src/lib/__tests__/nova-models.test.ts src/lib/__tests__/model-capabilities.test.ts src/lib/__tests__/gif-job-store.test.ts src/components/workspace/__tests__/WorkspaceModeTabs.test.tsx src/components/__tests__/ImageGenerationWorkbench.test.tsx`
+  - `npx.cmd eslint src/components/__tests__/ImageGenerationWorkbench.test.tsx src/components/ImageGenerationWorkbench.tsx src/lib/candidate-capabilities.ts src/lib/nova-models.ts src/lib/model-capabilities.ts src/lib/gif-job-store.ts src/components/workspace/WorkspaceModeTabs.tsx src/components/workspace/__tests__/WorkspaceModeTabs.test.tsx`
+- 验证结果：候选能力相关 `6` 个测试文件、`29` 条测试通过；targeted eslint 无报错。
