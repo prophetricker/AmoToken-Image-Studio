@@ -179,7 +179,8 @@ export function ImageGenerationWorkbench({
     outputSize,
     quality: gptImageAdvancedParams.quality,
     count: parallelCount,
-  }), [currentMode, outputSize, gptImageAdvancedParams.quality, parallelCount]);
+    referenceImageCount: pendingFiles.length,
+  }), [currentMode, outputSize, gptImageAdvancedParams.quality, parallelCount, pendingFiles.length]);
   const sensitivePromptWarning = useMemo(() => getSensitivePromptWarning(prompt), [prompt]);
 
   const handleParamsChange = useCallback((patch: Partial<GenerationParamsValue>) => {

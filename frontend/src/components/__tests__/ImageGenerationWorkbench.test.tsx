@@ -108,6 +108,27 @@ describe('ImageGenerationWorkbench AmoToken setup', () => {
     expect(screen.getByText(/可能触发内容限制/)).toBeInTheDocument();
   });
 
+  it('uses the fusion estimate when multiple reference images are loaded', async () => {
+    saveAmoTokenToken('sk-test-token');
+    render(
+      <ImageGenerationWorkbench
+        onSubmitText={vi.fn()}
+        onSubmitImage={vi.fn()}
+        initialData={{
+          model: AMOTOKEN_IMAGE_MODEL_ID,
+          outputSize: '2K',
+          refImages: [
+            { id: 'ref-1', name: 'ref-1.png', dataUrl: 'data:image/png;base64,AAAA', mimeType: 'image/png' },
+            { id: 'ref-2', name: 'ref-2.png', dataUrl: 'data:image/png;base64,BBBB', mimeType: 'image/png' },
+          ],
+        }}
+      />,
+    );
+
+    await screen.findByAltText('ref-1.png');
+    expect(screen.getByText(/预估费用/)).toHaveTextContent('约 ¥0.12-0.13');
+  });
+
   it('shows wide mode generation guidance outside failed cards', async () => {
     saveAmoTokenToken('sk-test-token');
     render(
