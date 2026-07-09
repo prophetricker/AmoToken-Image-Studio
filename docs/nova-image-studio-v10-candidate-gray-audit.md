@@ -250,3 +250,14 @@ v0.10 变化：
   - `npm.cmd run test:run -- src/lib/__tests__/model-capabilities.test.ts src/lib/__tests__/gif-job-store.test.ts src/lib/__tests__/nova-models.test.ts src/lib/__tests__/image-cost-estimator.test.ts src/lib/__tests__/server-gpt-image-params.test.ts`
   - `npx.cmd eslint src/lib/model-capabilities.ts src/lib/__tests__/model-capabilities.test.ts src/lib/gif-job-store.ts src/lib/nova-models.ts`
 - 验证结果：相关 `5` 个测试文件、`25` 条测试均通过；targeted eslint 无报错。
+
+2026-07-09 追加第三轮服务器只读观察：
+
+- 当前线上镜像仍为 `amotoken/nova-image-studio:v0.10-9ea12df`，本轮测试/文档提交未改变生产运行包，因此无需替换容器。
+- Nova 端口仍为 `127.0.0.1:3001->3000/tcp`。
+- Nova 内存约 `21.54MiB / 1.918GiB`；NewAPI 容器内存约 `49.95MiB / 1.918GiB`。
+- 根分区约 `39G` 总量，`8.0G` 可用，使用率约 `79%`。
+- Nova 数据目录约 `20M`，共 `49` 个文件；任务数据库主文件约 `48K`，WAL 约 `4.0M`。
+- 提示词图片缓存目录为 `/root/nova-image-studio/data/prompt-gallery-images`，约 `46` 个文件、`16M`，未见无上限膨胀。
+- 队列接口 `/api/nova/queue-status` 返回空闲：`processingCount=0`、`queuedCount=0`、`remainingQueueSlots=40`、`acceptingNewTasks=true`。
+- 最近 30 分钟 Nova 日志仅见启动、图片目录、提示词缓存目录、监听地址和内部 Base URL 配置日志，未见失败堆积或缓存错误。
