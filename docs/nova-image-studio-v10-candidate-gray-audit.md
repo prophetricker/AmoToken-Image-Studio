@@ -309,3 +309,27 @@ v0.10 变化：
 - 提示词图片缓存仍约 `16M`，没有触发缓存膨胀告警。
 - 清理 Docker build cache 属于可恢复构建缓存清理，不涉及 `/root/new-api-data` 或 `/root/nova-image-studio/data`，但仍需人工确认后执行；本轮没有自动清理。
 - 本地新增 `scripts/test-collect-nova-runtime.ps1`，覆盖多个提示词缓存目录合计超过阈值时必须输出 `runtime_warning=prompt_gallery_cache`。
+
+2026-07-09 追加多图融合预估费用修正并部署 `3965a1c`：
+
+- 修正生图工作台顶部实时预估费用：当已加载多张参考图时，将参考图数量传给 `estimateImageCost`，使用多图融合估算表，而不是单图编辑估算表。
+- 新增 `ImageGenerationWorkbench` 用例：2 张参考图、2K 输出时，页面预估费用应显示 `约 ¥0.12-0.13`。
+- 本地验证命令：
+  - `npm.cmd run test:run -- src/components/__tests__/ImageGenerationWorkbench.test.tsx`
+  - `npm.cmd run test:run -- src/lib/__tests__/image-cost-estimator.test.ts src/lib/__tests__/workspace-task-service.test.ts src/components/workspace/results/__tests__/CompletedJobCard.test.tsx src/components/workspace/results/__tests__/HistoryJobList.test.tsx src/components/__tests__/ImageGenerationWorkbench.test.tsx`
+  - `npx.cmd eslint src/components/ImageGenerationWorkbench.tsx src/components/__tests__/ImageGenerationWorkbench.test.tsx src/lib/image-cost-estimator.ts src/lib/__tests__/image-cost-estimator.test.ts`
+  - `npm.cmd run build`
+- 验证结果：相关 `5` 个测试文件、`29` 条测试通过；targeted eslint 无报错；Next 生产构建通过。
+- 部署镜像：`amotoken/nova-image-studio:v0.10-3965a1c`
+- 服务器源码：`3965a1c fix: estimate fusion costs in workbench`
+- Compose 镜像行：`amotoken/nova-image-studio:v0.10-3965a1c`
+- 本机首页：`200`
+- 队列：空闲，`processingCount=0`、`queuedCount=0`、`remainingQueueSlots=40`
+- 端口：`127.0.0.1:3001->3000/tcp`
+- 公网 `3001`：连接失败，符合预期
+- `https://img.amotoken.cc/`：未带 Basic Auth 返回 `401`
+- Nova 内存：约 `19.08MiB / 1.918GiB`
+- NewAPI 内存：约 `55.38MiB / 1.918GiB`
+- 根分区：约 `39G` 总量，`7.9G` 可用，使用率约 `79%`
+- 提示词图片缓存：`46` 个文件，约 `16M`，未见膨胀
+- Docker build cache：约 `14.22GB` 可回收；仍只记录告警，不自动清理。
