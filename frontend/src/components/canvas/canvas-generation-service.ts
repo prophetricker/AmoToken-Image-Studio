@@ -47,6 +47,11 @@ function resolveTaskModel(config: CanvasGenerationConfig): string {
   return normalizeModel(config.model);
 }
 
+function toUserFacingGenerationError(error: unknown): Error {
+  const message = getUserFacingFailureMessage(error instanceof Error ? error.message : String(error));
+  return new Error(message);
+}
+
 /** 提交单个节点的生成任务（count=1），返回 taskId。 */
 export async function submitNodeGeneration(args: {
   prompt: string;
@@ -58,24 +63,27 @@ export async function submitNodeGeneration(args: {
   if (!apiKey) throw new CanvasApiKeyMissingError();
 
   const imageRefs = (await Promise.all(args.referenceImages.map(toImageReference))).filter((ref): ref is ImageReference => ref !== null);
-  const taskId = await createNovaTask({
-    apiKey,
-    baseUrl: provider.baseUrl,
-    protocol: provider.protocol,
-    mode: imageRefs.length > 0 ? "image-to-image" : "text-to-image",
-    prompt: args.prompt,
-    outputSize: args.config.outputSize,
-    customSize: args.config.customSize,
-    aspectRatio: args.config.aspectRatio,
-    temperature: args.config.temperature,
-    model: provider.modelId,
-    gptImageQuality: args.config.gptImageQuality,
-    gptImageStyle: args.config.gptImageStyle,
-    gptImageBackground: args.config.gptImageBackground,
-    parallelCount: 1,
-    images: imageRefs,
-  });
-  return taskId;
+  try {
+    return await createNovaTask({
+      apiKey,
+      baseUrl: provider.baseUrl,
+      protocol: provider.protocol,
+      mode: imageRefs.length > 0 ? "image-to-image" : "text-to-image",
+      prompt: args.prompt,
+      outputSize: args.config.outputSize,
+      customSize: args.config.customSize,
+      aspectRatio: args.config.aspectRatio,
+      temperature: args.config.temperature,
+      model: provider.modelId,
+      gptImageQuality: args.config.gptImageQuality,
+      gptImageStyle: args.config.gptImageStyle,
+      gptImageBackground: args.config.gptImageBackground,
+      parallelCount: 1,
+      images: imageRefs,
+    });
+  } catch (error) {
+    throw toUserFacingGenerationError(error);
+  }
 }
 
 /** 轮询单个任务直到终态；通过 onStatus 回调实时通知调用方。 */
@@ -134,23 +142,28 @@ export async function generateCanvasImages(args: {
   if (!apiKey) throw new CanvasApiKeyMissingError();
 
   const imageRefs = (await Promise.all(args.referenceImages.map(toImageReference))).filter((ref): ref is ImageReference => ref !== null);
-  const taskId = await createNovaTask({
-    apiKey,
-    baseUrl: provider.baseUrl,
-    protocol: provider.protocol,
-    mode: imageRefs.length > 0 ? "image-to-image" : "text-to-image",
-    prompt: args.prompt,
-    outputSize: args.config.outputSize,
-    customSize: args.config.customSize,
-    aspectRatio: args.config.aspectRatio,
-    temperature: args.config.temperature,
-    model: provider.modelId,
-    gptImageQuality: args.config.gptImageQuality,
-    gptImageStyle: args.config.gptImageStyle,
-    gptImageBackground: args.config.gptImageBackground,
-    parallelCount: args.config.count,
-    images: imageRefs,
-  });
+  let taskId: string;
+  try {
+    taskId = await createNovaTask({
+      apiKey,
+      baseUrl: provider.baseUrl,
+      protocol: provider.protocol,
+      mode: imageRefs.length > 0 ? "image-to-image" : "text-to-image",
+      prompt: args.prompt,
+      outputSize: args.config.outputSize,
+      customSize: args.config.customSize,
+      aspectRatio: args.config.aspectRatio,
+      temperature: args.config.temperature,
+      model: provider.modelId,
+      gptImageQuality: args.config.gptImageQuality,
+      gptImageStyle: args.config.gptImageStyle,
+      gptImageBackground: args.config.gptImageBackground,
+      parallelCount: args.config.count,
+      images: imageRefs,
+    });
+  } catch (error) {
+    throw toUserFacingGenerationError(error);
+  }
 
   const images = await pollNodeTask(taskId, (s) => args.onStatus?.(s), args.signal);
   return images;

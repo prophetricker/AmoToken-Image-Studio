@@ -510,3 +510,15 @@ v0.10 变化：
 - 任务数据库 WAL：约 `4.1M`
 - Docker build cache：约 `15.77GB` 可回收，仍只记录告警，不自动清理
 - 日志：启动正常，未见失败堆积或缓存错误
+
+2026-07-09 追加无限画布创建任务失败文案回归：
+
+- 画布节点提交生成任务时，如果创建任务阶段返回 `API 请求失败: 502 Upstream request failed`，服务层会先清洗为 `生图失败` 用户口径。
+- 该清洗发生在 `canvas-generation-service`，因此编辑器节点和 toast 不会收到原始内部错误词。
+- 缺令牌路径仍保留 `请先粘贴 AmoToken 令牌`，不改变设置入口。
+- 本地验证命令：
+  - `npm.cmd run test:run -- src/components/canvas/__tests__/canvas-generation-service.test.ts`
+  - `npm.cmd run test:run -- src/components/canvas/__tests__/canvas-generation-service.test.ts src/components/canvas/components/__tests__/CanvasNode.test.tsx src/lib/__tests__/task-failure.test.ts src/components/workspace/__tests__/WorkspaceModeTabs.test.tsx src/hooks/__tests__/useGifWorkflow.test.tsx src/components/gif/__tests__/GifPanels.test.tsx`
+  - `npx.cmd eslint src/components/canvas/canvas-generation-service.ts src/components/canvas/__tests__/canvas-generation-service.test.ts src/components/canvas/components/canvas-node.tsx src/components/canvas/components/__tests__/CanvasNode.test.tsx src/lib/task-failure.ts`
+  - `npm.cmd run build`
+- 验证结果：相关 `6` 个测试文件、`34` 条测试通过；targeted eslint 无报错；Next 生产构建通过。测试中仍有既有 React `act(...)` 警告，但退出码为 0。
