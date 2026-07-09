@@ -379,3 +379,16 @@ v0.10 变化：
 - 任务数据库 WAL：约 `4.1M`
 - Docker build cache：约 `15.65GB` 可回收，仍只记录告警，不自动清理
 - 日志：启动正常，未见失败堆积或缓存错误
+
+2026-07-09 追加无限画布灰测文案回归：
+
+- 新增 `frontend/src/components/canvas/__tests__/canvas-generation-service.test.ts`，锁定画布节点生成缺令牌时提示 “请先粘贴 AmoToken 令牌”。
+- 新增 `frontend/src/components/canvas/components/__tests__/CanvasNode.test.tsx`，锁定图片节点错误 fallback 为“生图失败”，不再显示泛化的“生成失败”。
+- 画布服务缺少图片模型令牌时仍会触发设置弹窗，不改变 Nova 账户、余额、订阅和最终计费边界。
+- 画布代码用户可见路径未发现 `NewAPI`、`Upstream`、`API 密钥` 等内部词；`上游` 仅存在于开发注释。
+- 本地验证命令：
+  - `npm.cmd run test:run -- src/components/canvas/__tests__/canvas-generation-service.test.ts src/components/canvas/components/__tests__/CanvasNode.test.tsx`
+  - `npm.cmd run test:run -- src/components/canvas/__tests__/canvas-generation-service.test.ts src/components/canvas/components/__tests__/CanvasNode.test.tsx src/lib/__tests__/task-failure.test.ts src/components/__tests__/ImageGenerationWorkbench.test.tsx src/components/workspace/__tests__/WorkspaceModeTabs.test.tsx src/components/gif/__tests__/GifPanels.test.tsx src/lib/__tests__/gif-job-store.test.ts`
+  - `npx.cmd eslint src/components/canvas/canvas-generation-service.ts src/components/canvas/components/canvas-node.tsx src/components/canvas/__tests__/canvas-generation-service.test.ts src/components/canvas/components/__tests__/CanvasNode.test.tsx`
+  - `npm.cmd run build`
+- 验证结果：相关 `7` 个测试文件、`41` 条测试通过；触及文件 targeted eslint 无报错；Next 生产构建通过。测试中仍有既有 React `act(...)` 警告，但退出码为 0。

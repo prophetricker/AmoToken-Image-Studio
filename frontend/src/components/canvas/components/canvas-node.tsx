@@ -236,7 +236,7 @@ function ImageNodeBody({
       {isError && (
         <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-3 text-center" data-canvas-no-zoom onPointerDown={(event) => event.stopPropagation()}>
           <AlertCircle className="size-6 text-destructive" />
-          <span className="line-clamp-3 text-xs text-destructive">{data.metadata?.errorDetails || "生成失败"}</span>
+          <span className="line-clamp-3 text-xs text-destructive">{data.metadata?.errorDetails || "生图失败"}</span>
           {onRetry && <RetryButton onRetry={() => onRetry(data)} />}
         </div>
       )}

@@ -26,7 +26,7 @@ export type CanvasGeneratedImage = {
 
 export class CanvasApiKeyMissingError extends Error {
   constructor() {
-    super("请先配置 API 密钥");
+    super("请先粘贴 AmoToken 令牌");
     this.name = "CanvasApiKeyMissingError";
   }
 }
