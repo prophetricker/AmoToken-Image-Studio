@@ -1,11 +1,14 @@
 'use client';
 
 import {
+  AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID,
   AMOTOKEN_IMAGE_MODEL_ID,
   AMOTOKEN_TEXT_MODEL_ID,
 } from '@/lib/amotoken-image-capabilities';
+import { resolveCandidateModesEnabled } from '@/lib/candidate-capabilities';
 
 export {
+  AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID,
   AMOTOKEN_IMAGE_MODEL_ID,
   AMOTOKEN_TEXT_MODEL_ID,
   getPublicAmoTokenImageCapabilities,
@@ -246,6 +249,29 @@ function ensureTextModels(raw?: unknown): TextModelConfig[] {
     .filter((item, index, list) => list.findIndex((candidate) => candidate.id === item.id) === index);
 }
 
+function withoutRuntimeGrayImageModels(imageModels: ImageModelConfig[]): ImageModelConfig[] {
+  return imageModels.filter((model) => model.id !== AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID);
+}
+
+function withRuntimeGrayImageModels(imageModels: ImageModelConfig[]): ImageModelConfig[] {
+  const stableModels = withoutRuntimeGrayImageModels(imageModels);
+  if (!resolveCandidateModesEnabled()) return stableModels;
+
+  const source = stableModels.find((model) => model.id === AMOTOKEN_IMAGE_MODEL_ID);
+  if (!source?.apiKey) return stableModels;
+
+  return [
+    ...stableModels,
+    {
+      ...source,
+      id: AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID,
+      name: 'AmoToken GPT Image 2 4K 灰测',
+      maxOutputSize: '4K',
+      supportsAdvancedParams: true,
+    },
+  ];
+}
+
 function ensureDefaults(raw: Partial<DefaultModels> | undefined, imageModels: ImageModelConfig[], textModels: TextModelConfig[]): DefaultModels {
   const completeImageModels = imageModels.filter(isCompleteImageModel);
   const completeTextModels = textModels.filter(isCompleteTextModel);
@@ -321,7 +347,7 @@ export function loadRegistry(): NovaModelRegistry {
   }
 
   const parsed = JSON.parse(raw) as Partial<NovaModelRegistry>;
-  const imageModels = ensureImageModels(parsed.imageModels);
+  const imageModels = withRuntimeGrayImageModels(ensureImageModels(parsed.imageModels));
   const textModels = ensureTextModels(parsed.textModels);
   const defaults = ensureDefaults(parsed.defaults, imageModels, textModels);
   return { imageModels, textModels, defaults };
@@ -330,7 +356,7 @@ export function loadRegistry(): NovaModelRegistry {
 export function saveRegistry(registry: NovaModelRegistry): void {
   if (typeof window === 'undefined') return;
 
-  const imageModels = ensureImageModels(registry.imageModels);
+  const imageModels = withoutRuntimeGrayImageModels(ensureImageModels(registry.imageModels));
   const textModels = ensureTextModels(registry.textModels);
   const normalized: NovaModelRegistry = {
     imageModels,

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { ImageGenerationWorkbench } from '@/components/ImageGenerationWorkbench';
@@ -35,7 +35,7 @@ import { Shuffle, Settings, User, Wallpaper, PanelLeftClose, PanelLeftOpen } fro
 import { getNovaTask } from '@/lib/ccode-task-client';
 import { finalizeCompletedServerTask } from '@/lib/workspace-task-service';
 import { classifyTaskFailure } from '@/lib/task-failure';
-import { isCandidateMode, isCandidateModesEnabled } from '@/lib/candidate-capabilities';
+import { isCandidateMode, isCandidateModesEnabled, resolveCandidateModesEnabled } from '@/lib/candidate-capabilities';
 import type { RefImageData, StoredJob } from '@/lib/job-store';
 import { subscribeImageActionToasts, subscribeUseAsImageReference } from '@/lib/image-actions';
 import {
@@ -47,6 +47,17 @@ import { cn } from '@/lib/utils';
 import { BA_RANDOM_URL, BING_WALLPAPER_URL } from '@/lib/constants';
 
 type WorkspaceTab = 'image-generation' | 'agent' | 'reverse-prompt' | 'prompt-gallery' | 'gif' | 'assets' | 'canvas';
+
+function subscribeCandidateModePreference(onChange: () => void): () => void {
+  if (typeof window === 'undefined') return () => undefined;
+
+  window.addEventListener('storage', onChange);
+  window.addEventListener('popstate', onChange);
+  return () => {
+    window.removeEventListener('storage', onChange);
+    window.removeEventListener('popstate', onChange);
+  };
+}
 
 export function WorkspaceShell() {
   const queueStatus = useQueueStatus();
@@ -62,7 +73,14 @@ export function WorkspaceShell() {
   const workspace = useWorkspaceJobs();
   const galleryConfig = usePromptGalleryConfig();
   const promptGallery = usePromptGalleryAccess(galleryConfig.mode, galleryConfig.passwordEnabled, setError, () => setActiveTab('prompt-gallery'));
-  const candidateModesEnabled = isCandidateModesEnabled();
+  const candidateModesEnabled = useSyncExternalStore(
+    subscribeCandidateModePreference,
+    resolveCandidateModesEnabled,
+    isCandidateModesEnabled,
+  );
+  const visibleActiveTab: WorkspaceTab = !candidateModesEnabled && isCandidateMode(activeTab)
+    ? 'image-generation'
+    : activeTab;
 
   // Toast state
   const [toasts, setToasts] = useState<ToastData[]>([]);
@@ -224,19 +242,19 @@ export function WorkspaceShell() {
       className={cn(
         'mx-auto flex min-h-screen w-full flex-col gap-4 overflow-x-hidden px-3 py-3 transition-[max-width] duration-200 sm:gap-5 sm:px-6 sm:py-5 lg:px-8',
         wideMode ? 'max-w-none xl:h-dvh xl:min-h-0 xl:gap-3 xl:py-3 xl:overflow-hidden' : 'max-w-5xl',
-        !wideMode && activeTab === 'agent' && 'h-dvh min-h-0 overflow-hidden'
+        !wideMode && visibleActiveTab === 'agent' && 'h-dvh min-h-0 overflow-hidden'
       )}
     >
       <div className={cn(
         'flex-1 bg-transparent shadow-none sm:rounded-3xl sm:bg-card/95 sm:shadow-sm sm:border sm:border-border/70',
         wideMode && 'flex min-h-0 flex-col',
-        !wideMode && activeTab === 'agent' && 'flex min-h-0 flex-col'
+        !wideMode && visibleActiveTab === 'agent' && 'flex min-h-0 flex-col'
       )}>
         <div className={cn(
           'p-0 sm:p-5',
           wideMode
             ? 'flex h-full flex-1 flex-col min-h-0 sm:p-3'
-            : activeTab === 'agent'
+            : visibleActiveTab === 'agent'
               ? 'flex h-full flex-1 flex-col min-h-0 gap-4'
               : 'space-y-4'
         )}>
@@ -251,13 +269,13 @@ export function WorkspaceShell() {
           />
 
           <Tabs
-            value={activeTab}
+            value={visibleActiveTab}
             onValueChange={handleTabChange}
             orientation={wideMode ? 'vertical' : 'horizontal'}
             className={cn(
               wideMode
                 ? 'gap-4 xl:flex-row xl:flex-1 xl:min-h-0'
-                : activeTab === 'agent'
+                : visibleActiveTab === 'agent'
                   ? 'gap-2 flex flex-col flex-1 min-h-0'
                   : 'gap-2'
             )}
@@ -359,10 +377,10 @@ export function WorkspaceShell() {
 
             <div className={cn(
               wideMode && 'xl:flex xl:flex-1 xl:min-h-0 xl:min-w-0',
-              wideMode && (activeTab === 'image-generation' || activeTab === 'agent'
+              wideMode && (visibleActiveTab === 'image-generation' || visibleActiveTab === 'agent'
                 ? 'xl:overflow-hidden'
                 : 'xl:overflow-y-auto xl:overflow-x-hidden'),
-              !wideMode && activeTab === 'agent' && 'flex flex-1 flex-col min-h-0'
+              !wideMode && visibleActiveTab === 'agent' && 'flex flex-1 flex-col min-h-0'
             )}>
               <TabsContent value="image-generation" keepMounted className={cn(wideMode ? 'space-y-6 xl:flex xl:min-h-0 xl:space-y-0' : 'space-y-3')}>
                 <div className={cn(wideMode ? 'grid items-start gap-5 xl:h-full xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(460px,0.95fr)_minmax(0,1.35fr)] xl:items-stretch' : 'space-y-3')}>
@@ -380,7 +398,7 @@ export function WorkspaceShell() {
                   </div>
                   <HistoryJobList
                     wideMode={wideMode}
-                    active={activeTab === 'image-generation'}
+                    active={visibleActiveTab === 'image-generation'}
                     title="生图任务"
                     mode="text-to-image"
                     historyFilter={generationHistoryFilter}
@@ -450,7 +468,7 @@ export function WorkspaceShell() {
 
               <TabsContent value="assets" keepMounted>
                 <div className={cn('bg-transparent p-0 shadow-none sm:rounded-2xl sm:bg-card sm:p-4 sm:shadow-sm sm:border sm:border-border', wideMode && 'sm:p-5')}>
-                  <AssetsWorkspace wideMode={wideMode} active={activeTab === 'assets'} />
+                  <AssetsWorkspace wideMode={wideMode} active={visibleActiveTab === 'assets'} />
                 </div>
               </TabsContent>
 
