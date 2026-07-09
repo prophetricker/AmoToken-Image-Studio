@@ -110,4 +110,14 @@ describe('GIF gray-test panels', () => {
     expect(screen.getByText(/实际以爱词元记录为准/)).toBeInTheDocument();
     expect(container.textContent).not.toMatch(/上游|NewAPI|Upstream/);
   });
+
+  it('lets the GIF parameter card grow instead of forcing an inner scrollbar', () => {
+    render(<GifParametersPanel {...emptyParameterProps} disabled={false} model="amotoken-gpt-image-2-4k-gray" modelOptions={[{ value: 'amotoken-gpt-image-2-4k-gray', label: 'AmoToken GPT Image 2 4K 灰测' }]} />);
+
+    const panel = screen.getByTestId('gif-parameters-panel');
+    const scrollRegion = screen.getByTestId('gif-parameters-body');
+
+    expect(panel.className).not.toContain('md:h-[');
+    expect(scrollRegion.className).not.toContain('md:overflow-y-auto');
+  });
 });

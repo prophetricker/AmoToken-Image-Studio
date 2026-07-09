@@ -109,20 +109,18 @@ function ImageGenerationTips() {
         <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
           <Sparkles className="h-4 w-4" />
         </div>
-        <div className="min-w-0 space-y-3">
+        <div className="min-w-0 space-y-2">
           <div>
             <h3 className="text-sm font-medium text-foreground">生图建议</h3>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              复杂画面、角色过多、细节/文字太密、分辨率过高，或提示词触发内容限制时，可能会生成失败。
+              复杂画面、角色过多、文字过密、分辨率过高，或提示词/参考图触发内容限制时，可能会生成失败。
             </p>
           </div>
-          <div className="grid gap-x-4 gap-y-2 text-xs leading-5 text-muted-foreground 2xl:grid-cols-2">
-            <p>先用 1K 或较少角色生成主体，再用单图编辑补服装、表情和背景。</p>
-            <p>多人合照、长剧情、复杂构图可以拆成几张图，最后再做多图融合。</p>
-            <p>同一提示词反复失败时，删掉过密修饰词，保留主体、场景、风格和镜头。</p>
-            <p>包含知名角色、品牌、影视动漫作品名，或要求高度还原原作风格时，可能触发内容限制。</p>
-            <p>生图服务繁忙、网络波动或连接中断也可能导致失败，可以稍后重试或降低尺寸。</p>
-            <p>失败通常不扣费，最终以爱词元记录为准。</p>
+          <div className="grid gap-x-4 gap-y-1.5 text-xs leading-5 text-muted-foreground 2xl:grid-cols-2">
+            <p>品牌标志/logo、知名角色、影视动漫作品名、真人肖像、成人或暴力血腥内容，可能触发限制。</p>
+            <p>需要抠图、去字、改品牌时，尽量描述“保留主体、移除背景/遮挡”，少写品牌名。</p>
+            <p>同一提示词反复失败时，降低尺寸，减少角色和修饰词，只保留主体、场景、风格、镜头。</p>
+            <p>生图服务繁忙、网络波动或连接中断也可能导致失败；失败通常不扣费，最终以爱词元记录为准。</p>
           </div>
         </div>
       </div>

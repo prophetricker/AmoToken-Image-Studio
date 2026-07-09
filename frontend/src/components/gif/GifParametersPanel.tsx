@@ -98,8 +98,8 @@ export function GifParametersPanel(props: GifParametersPanelProps) {
   }
 
   return (
-    <div className="flex flex-col rounded-xl border border-border bg-muted/50 shadow-md md:h-[calc(100vh-400px)]">
-      <div className="min-h-0 md:flex-1 md:overflow-y-auto">
+    <div data-testid="gif-parameters-panel" className="flex h-full min-h-[520px] flex-col rounded-xl border border-border bg-muted/50 shadow-md">
+      <div data-testid="gif-parameters-body" className="flex-1">
         <div className="p-4">
           <div
             onDrop={props.onDrop}
