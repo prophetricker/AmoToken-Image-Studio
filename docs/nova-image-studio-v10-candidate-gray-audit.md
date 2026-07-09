@@ -283,3 +283,19 @@ v0.10 变化：
   - `npx.cmd eslint src/lib/task-failure.ts src/lib/ccode-task-client.ts src/lib/__tests__/task-failure.test.ts src/lib/__tests__/ccode-task-client.test.ts src/hooks/useAgentChat.ts src/hooks/useGifWorkflow.ts src/hooks/useServerTaskPolling.ts src/lib/workspace-task-service.ts src/components/SettingsModal.tsx`
   - `npm.cmd run build`
 - 验证结果：相关 `6` 个测试文件、`48` 条测试均通过；targeted eslint 无报错；Next 生产构建通过。
+
+2026-07-09 部署 `658a617` 后验证：
+
+- 当前镜像：`amotoken/nova-image-studio:v0.10-658a617`
+- 服务器源码：`658a617`
+- Compose 镜像行：`amotoken/nova-image-studio:v0.10-658a617`
+- 本机首页：`200`
+- 队列：空闲，`processingCount=0`、`queuedCount=0`、`remainingQueueSlots=40`
+- 端口：`127.0.0.1:3001->3000/tcp`
+- 公网 `3001`：连接失败，符合预期
+- `https://img.amotoken.cc/`：未带 Basic Auth 返回 `401`
+- Nova 内存：约 `19.08MiB / 1.918GiB`
+- 根分区：约 `39G` 总量，`6.6G` 可用，使用率约 `83%`
+- 提示词图片缓存：`46` 个文件，约 `16M`，未见膨胀
+- Docker build cache：约 `15.6GB` 可回收；本次仍未自动清理，若后续部署空间紧张再确认后处理。
+- 部署包检查：新设置页文案 `爱词元生图服务已预置完成` 已在前端包中，旧文案 `后端会自动连接` 不存在。
