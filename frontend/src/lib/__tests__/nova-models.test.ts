@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  AMOTOKEN_IMAGE_MODEL_1K_BACKUP_ID,
   AMOTOKEN_IMAGE_MODEL_ID,
   AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID,
   AMOTOKEN_TEXT_MODEL_ID,
@@ -25,10 +26,10 @@ beforeEach(() => {
 });
 
 describe('AmoToken model registry', () => {
-  it('builds one image model and one text helper model from a user token', () => {
+  it('builds image models and one text helper model from a user token', () => {
     const registry = buildAmoTokenRegistry('sk-test-token');
 
-    expect(registry.imageModels).toHaveLength(1);
+    expect(registry.imageModels).toHaveLength(2);
     expect(registry.imageModels[0]).toMatchObject({
       id: AMOTOKEN_IMAGE_MODEL_ID,
       protocol: 'openai',
@@ -37,6 +38,16 @@ describe('AmoToken model registry', () => {
       baseUrl: 'https://amotoken.cc/v1',
       maxRefImages: 4,
       maxOutputSize: '2K',
+      supportsAdvancedParams: true,
+    });
+    expect(registry.imageModels[1]).toMatchObject({
+      id: AMOTOKEN_IMAGE_MODEL_1K_BACKUP_ID,
+      protocol: 'openai',
+      modelId: 'gpt-image-2-1k-backup',
+      apiKey: 'sk-test-token',
+      baseUrl: 'https://amotoken.cc/v1',
+      maxRefImages: 4,
+      maxOutputSize: '1K',
       supportsAdvancedParams: true,
     });
     expect(registry.textModels).toHaveLength(1);
@@ -62,10 +73,53 @@ describe('AmoToken model registry', () => {
     const registry = loadRegistry();
     const capabilities = getPublicAmoTokenImageCapabilities();
 
-    expect(registry.imageModels.map(model => model.id)).toEqual([AMOTOKEN_IMAGE_MODEL_ID]);
+    expect(registry.imageModels.map(model => model.id)).toEqual([
+      AMOTOKEN_IMAGE_MODEL_ID,
+      AMOTOKEN_IMAGE_MODEL_1K_BACKUP_ID,
+    ]);
     expect(registry.textModels.map(model => model.id)).toEqual([AMOTOKEN_TEXT_MODEL_ID]);
-    expect(capabilities.map(item => item.id)).toEqual([AMOTOKEN_IMAGE_MODEL_ID]);
+    expect(capabilities.map(item => item.id)).toEqual([
+      AMOTOKEN_IMAGE_MODEL_ID,
+      AMOTOKEN_IMAGE_MODEL_1K_BACKUP_ID,
+    ]);
     expect(capabilities.every(item => item.visible && !item.gray)).toBe(true);
+  });
+
+  it('adds the 1K backup model when loading an older AmoToken registry', () => {
+    store.set('nova-model-registry', JSON.stringify({
+      imageModels: [
+        {
+          id: AMOTOKEN_IMAGE_MODEL_ID,
+          protocol: 'openai',
+          name: 'AmoToken GPT Image 2',
+          modelId: 'gpt-image-2',
+          apiKey: 'sk-live-token',
+          baseUrl: 'https://amotoken.cc/v1',
+          builtinPreset: 'gpt-image-2',
+          maxRefImages: 4,
+          maxOutputSize: '2K',
+          supportsAdvancedParams: true,
+        },
+      ],
+      textModels: [],
+      defaults: {
+        textToImage: AMOTOKEN_IMAGE_MODEL_ID,
+        imageToImage: AMOTOKEN_IMAGE_MODEL_ID,
+      },
+    }));
+
+    const registry = loadRegistry();
+
+    expect(registry.imageModels.map(model => model.id)).toEqual([
+      AMOTOKEN_IMAGE_MODEL_ID,
+      AMOTOKEN_IMAGE_MODEL_1K_BACKUP_ID,
+    ]);
+    expect(registry.imageModels[1]).toMatchObject({
+      modelId: 'gpt-image-2-1k-backup',
+      maxOutputSize: '1K',
+      apiKey: 'sk-live-token',
+    });
+    expect(registry.defaults.textToImage).toBe(AMOTOKEN_IMAGE_MODEL_ID);
   });
 
   it('adds the 4K gray-test image model only when candidate modes are enabled', () => {
@@ -76,9 +130,10 @@ describe('AmoToken model registry', () => {
 
     expect(registry.imageModels.map(model => model.id)).toEqual([
       AMOTOKEN_IMAGE_MODEL_ID,
+      AMOTOKEN_IMAGE_MODEL_1K_BACKUP_ID,
       AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID,
     ]);
-    expect(registry.imageModels[1]).toMatchObject({
+    expect(registry.imageModels[2]).toMatchObject({
       id: AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID,
       protocol: 'openai',
       modelId: 'gpt-image-2',
@@ -99,7 +154,10 @@ describe('AmoToken model registry', () => {
 
     localStorage.setItem(CANDIDATE_MODES_STORAGE_KEY, 'disabled');
 
-    expect(loadRegistry().imageModels.map(model => model.id)).toEqual([AMOTOKEN_IMAGE_MODEL_ID]);
+    expect(loadRegistry().imageModels.map(model => model.id)).toEqual([
+      AMOTOKEN_IMAGE_MODEL_ID,
+      AMOTOKEN_IMAGE_MODEL_1K_BACKUP_ID,
+    ]);
   });
 
   it('does not persist the runtime-only 4K gray-test image model when saving a derived registry', () => {
@@ -110,6 +168,9 @@ describe('AmoToken model registry', () => {
     saveRegistry(derived);
 
     const raw = JSON.parse(store.get('nova-model-registry') || '{}') as { imageModels?: Array<{ id?: string }> };
-    expect(raw.imageModels?.map(model => model.id)).toEqual([AMOTOKEN_IMAGE_MODEL_ID]);
+    expect(raw.imageModels?.map(model => model.id)).toEqual([
+      AMOTOKEN_IMAGE_MODEL_ID,
+      AMOTOKEN_IMAGE_MODEL_1K_BACKUP_ID,
+    ]);
   });
 });

@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  AMOTOKEN_IMAGE_MODEL_1K_BACKUP_ID,
   AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID,
   AMOTOKEN_IMAGE_MODEL_ID,
   AMOTOKEN_TEXT_MODEL_ID,
@@ -8,6 +9,7 @@ import {
 import { resolveCandidateModesEnabled } from '@/lib/candidate-capabilities';
 
 export {
+  AMOTOKEN_IMAGE_MODEL_1K_BACKUP_ID,
   AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID,
   AMOTOKEN_IMAGE_MODEL_ID,
   AMOTOKEN_TEXT_MODEL_ID,
@@ -253,6 +255,28 @@ function withoutRuntimeGrayImageModels(imageModels: ImageModelConfig[]): ImageMo
   return imageModels.filter((model) => model.id !== AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID);
 }
 
+function withAmoTokenBackupImageModel(imageModels: ImageModelConfig[]): ImageModelConfig[] {
+  if (imageModels.some((model) => model.id === AMOTOKEN_IMAGE_MODEL_1K_BACKUP_ID)) return imageModels;
+
+  const sourceIndex = imageModels.findIndex((model) => model.id === AMOTOKEN_IMAGE_MODEL_ID);
+  const source = imageModels[sourceIndex];
+  if (!source?.apiKey) return imageModels;
+
+  const backupModel: ImageModelConfig = {
+    ...source,
+    id: AMOTOKEN_IMAGE_MODEL_1K_BACKUP_ID,
+    name: 'AmoToken GPT Image 2 1K 备用',
+    modelId: 'gpt-image-2-1k-backup',
+    maxOutputSize: '1K',
+    supportsAdvancedParams: true,
+  };
+  return [
+    ...imageModels.slice(0, sourceIndex + 1),
+    backupModel,
+    ...imageModels.slice(sourceIndex + 1),
+  ];
+}
+
 function withRuntimeGrayImageModels(imageModels: ImageModelConfig[]): ImageModelConfig[] {
   const stableModels = withoutRuntimeGrayImageModels(imageModels);
   if (!resolveCandidateModesEnabled()) return stableModels;
@@ -313,6 +337,18 @@ export function buildAmoTokenRegistry(apiKey: string): NovaModelRegistry {
         maxOutputSize: '2K',
         supportsAdvancedParams: true,
       },
+      {
+        id: AMOTOKEN_IMAGE_MODEL_1K_BACKUP_ID,
+        protocol: 'openai',
+        name: 'AmoToken GPT Image 2 1K 备用',
+        modelId: 'gpt-image-2-1k-backup',
+        apiKey: token,
+        baseUrl: 'https://amotoken.cc/v1',
+        builtinPreset: 'gpt-image-2',
+        maxRefImages: 4,
+        maxOutputSize: '1K',
+        supportsAdvancedParams: true,
+      },
     ],
     textModels: [
       {
@@ -347,7 +383,7 @@ export function loadRegistry(): NovaModelRegistry {
   }
 
   const parsed = JSON.parse(raw) as Partial<NovaModelRegistry>;
-  const imageModels = withRuntimeGrayImageModels(ensureImageModels(parsed.imageModels));
+  const imageModels = withRuntimeGrayImageModels(withAmoTokenBackupImageModel(ensureImageModels(parsed.imageModels)));
   const textModels = ensureTextModels(parsed.textModels);
   const defaults = ensureDefaults(parsed.defaults, imageModels, textModels);
   return { imageModels, textModels, defaults };
@@ -356,7 +392,7 @@ export function loadRegistry(): NovaModelRegistry {
 export function saveRegistry(registry: NovaModelRegistry): void {
   if (typeof window === 'undefined') return;
 
-  const imageModels = withoutRuntimeGrayImageModels(ensureImageModels(registry.imageModels));
+  const imageModels = withAmoTokenBackupImageModel(withoutRuntimeGrayImageModels(ensureImageModels(registry.imageModels)));
   const textModels = ensureTextModels(registry.textModels);
   const normalized: NovaModelRegistry = {
     imageModels,
