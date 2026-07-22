@@ -112,6 +112,10 @@ function resolveOpenAiCompatibleBaseUrl(protocol = 'openai', baseUrl = '') {
   return normalized || (protocol === 'google' ? normalizeProtocolBaseUrl('google', baseUrl) : resolveNovaApiBaseUrl());
 }
 
+function resolveImageProductApiBaseUrl() {
+  return resolveForcedOpenAiBaseUrl() || normalizeProtocolBaseUrl('openai', 'https://amotoken.cc');
+}
+
 function describeBaseUrlForLog(baseUrl) {
   try {
     const url = new URL(baseUrl);
@@ -1755,6 +1759,47 @@ async function handleApi(req, res, pathname) {
       const password = String(body?.password || '');
       const ok = hashPromptGalleryPassword(password) === hashPromptGalleryPassword(expected);
       sendJson(res, 200, { ok });
+      return true;
+    }
+
+    if (req.method === 'GET' && apiPathname === '/api/nova/image-products/catalog') {
+      const authorization = String(req.headers.authorization || '').trim();
+      if (!/^Bearer\s+\S+$/i.test(authorization)) {
+        sendJson(res, 401, { error: '请先粘贴 AmoToken 令牌' });
+        return true;
+      }
+      const response = await fetchWithTimeout(`${resolveImageProductApiBaseUrl()}/v1/images/catalog`, {
+        method: 'GET',
+        headers: { Authorization: authorization },
+      });
+      let data = null;
+      try { data = await response.json(); } catch { /* ignore */ }
+      sendJson(res, response.status, data || { error: '暂时无法读取生图模型' }, {
+        'Cache-Control': 'no-store',
+      });
+      return true;
+    }
+
+    if (req.method === 'POST' && apiPathname === '/api/nova/image-products/quote') {
+      const authorization = String(req.headers.authorization || '').trim();
+      if (!/^Bearer\s+\S+$/i.test(authorization)) {
+        sendJson(res, 401, { error: '请先粘贴 AmoToken 令牌' });
+        return true;
+      }
+      const body = await readJsonBody(req);
+      const response = await fetchWithTimeout(`${resolveImageProductApiBaseUrl()}/v1/images/quote`, {
+        method: 'POST',
+        headers: {
+          Authorization: authorization,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+      let data = null;
+      try { data = await response.json(); } catch { /* ignore */ }
+      sendJson(res, response.status, data || { error: '暂时无法获取生图报价' }, {
+        'Cache-Control': 'no-store',
+      });
       return true;
     }
 

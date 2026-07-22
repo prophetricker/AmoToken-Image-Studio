@@ -77,3 +77,20 @@ describe('AmoToken forced base URL guard', () => {
     expect(serverSource).toContain('const modelsBaseUrl = resolveOpenAiCompatibleBaseUrl(protocol, baseUrl);');
   });
 });
+
+describe('AmoToken image product proxy', () => {
+  it('proxies catalog and quote requests to the forced AmoToken service', () => {
+    expect(serverSource).toContain("'/api/nova/image-products/catalog'");
+    expect(serverSource).toContain("'/api/nova/image-products/quote'");
+    expect(serverSource).toContain('/v1/images/catalog');
+    expect(serverSource).toContain('/v1/images/quote');
+    expect(serverSource).toContain('resolveImageProductApiBaseUrl()');
+  });
+
+  it('forwards only the current authorization header and disables response caching', () => {
+    expect(serverSource).toContain("Authorization: authorization");
+    expect(serverSource).toContain("'Cache-Control': 'no-store'");
+    expect(serverSource).not.toContain('console.log(authorization)');
+    expect(serverSource).not.toContain('console.warn(authorization)');
+  });
+});
