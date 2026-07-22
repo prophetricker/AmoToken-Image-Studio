@@ -7,7 +7,11 @@ import {
   type ModelId,
 } from '@/lib/gemini-config';
 import { getImageModelById, loadRegistry } from '@/lib/nova-models';
-import { AMOTOKEN_IMAGE_MODEL_ID } from '@/lib/amotoken-image-capabilities';
+import {
+  AMOTOKEN_IMAGE_MODEL_1K_BACKUP_ID,
+  AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID,
+  AMOTOKEN_IMAGE_MODEL_ID,
+} from '@/lib/amotoken-image-capabilities';
 import type { AspectRatio, OutputSize, RefImageData, StoredJob } from '@/lib/job-store';
 
 export type ParallelCount = 1 | 2 | 3 | 4;
@@ -386,6 +390,11 @@ export function getModelDisplayName(model: string): string {
 export function normalizeModel(candidate?: string): ModelId {
   const fallback = getDefaultModelId();
   if (!candidate) return fallback;
+  if (candidate === AMOTOKEN_IMAGE_MODEL_1K_BACKUP_ID || candidate === AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID) {
+    return getModelOptions().some(option => option.value === AMOTOKEN_IMAGE_MODEL_ID)
+      ? AMOTOKEN_IMAGE_MODEL_ID
+      : fallback;
+  }
   return getModelOptions().some(option => option.value === candidate)
     ? candidate as ModelId
     : fallback;

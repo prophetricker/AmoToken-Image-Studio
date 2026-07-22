@@ -1,7 +1,14 @@
 import { isGptImageModel } from '@/lib/gemini-config';
 import type { RefImageData } from '@/lib/job-store';
 import { supportsCustomSize, type GptImageBackground, type GptImageQuality, type GptImageStyle } from '@/lib/model-capabilities';
-import { getDefaultImageModel, getCompleteImageModels, loadRegistry } from '@/lib/nova-models';
+import { resolveCandidateModesEnabled } from '@/lib/candidate-capabilities';
+import {
+  AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID,
+  AMOTOKEN_IMAGE_MODEL_ID,
+  getDefaultImageModel,
+  getCompleteImageModels,
+  loadRegistry,
+} from '@/lib/nova-models';
 
 export type GifModel = string;
 
@@ -123,9 +130,22 @@ export function needsOverwriteConfirm(job: ActiveGifJob | null): boolean {
 
 export function getGifCompatibleModels(): { value: GifModel; label: string }[] {
   const registry = loadRegistry();
-  return getCompleteImageModels(registry)
+  const configuredModels = getCompleteImageModels(registry);
+  const compatibleModels = configuredModels
     .filter((model) => isGptImageModel(model.id) && supportsCustomSize(model.id) && model.maxOutputSize === '4K')
     .map((model) => ({ value: model.id, label: model.name }));
+
+  if (
+    resolveCandidateModesEnabled()
+    && configuredModels.some((model) => model.id === AMOTOKEN_IMAGE_MODEL_ID)
+  ) {
+    compatibleModels.push({
+      value: AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID,
+      label: 'AmoToken GPT Image 2 4K 灰测',
+    });
+  }
+
+  return compatibleModels;
 }
 
 export function getDefaultGifModelId(): GifModel {

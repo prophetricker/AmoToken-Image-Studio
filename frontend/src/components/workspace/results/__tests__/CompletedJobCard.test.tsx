@@ -34,8 +34,21 @@ function makeCompletedJob(overrides: Partial<StoredJob> = {}): StoredJob {
     startedAt: '2026-07-06T08:00:00.000Z',
     completedAt: '2026-07-06T08:00:56.000Z',
     elapsedMs: 56000,
-    costEstimate: { currency: 'CNY', min: 0.08, max: 0.13, source: 'gray-log-estimate' },
-    billingStatus: 'pending-newapi-check',
+    imageQuote: {
+      catalogVersion: 'image-v11',
+      model: 'gpt-image-2',
+      displayName: 'GPT Image 2',
+      mode: 'generation',
+      resolutionTier: '2K',
+      size: '2048x2048',
+      quality: 'high',
+      count: 1,
+      referenceImageCount: 0,
+      unitPrice: 0.13,
+      totalPrice: 0.13,
+      currency: 'API_CREDIT',
+      available: true,
+    },
     imageData: 'iVBORw0KGgo=',
     images: ['iVBORw0KGgo='],
     ...overrides,
@@ -71,7 +84,7 @@ beforeEach(() => {
 });
 
 describe('CompletedJobCard v0.6 metadata', () => {
-  it('shows task thumbnail actions, deduplicated inline params, elapsed time, and cost estimate', () => {
+  it('shows task thumbnail actions, deduplicated inline params, elapsed time, and exact API-credit quote', () => {
     render(
       <CompletedJobCard
         job={makeCompletedJob()}
@@ -83,8 +96,8 @@ describe('CompletedJobCard v0.6 metadata', () => {
     expect(screen.getByText(/一只小鲨鱼戴上海盗帽/)).toBeInTheDocument();
     expect(screen.getByText('文生图')).toBeInTheDocument();
     expect(screen.getByText('耗时 56 秒')).toBeInTheDocument();
-    expect(screen.getByText('约 ¥0.08-0.13')).toBeInTheDocument();
-    expect(screen.getByText('实际扣费待爱词元记录核对')).toBeInTheDocument();
+    expect(screen.getByText('预计消耗 $0.13 API 额度')).toBeInTheDocument();
+    expect(screen.queryByText(/¥|实际扣费待/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /复制提示词/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /下载/ })).toBeInTheDocument();
     expect(screen.queryByText('完整参数')).not.toBeInTheDocument();
@@ -96,6 +109,43 @@ describe('CompletedJobCard v0.6 metadata', () => {
     expect(screen.getByText('背景：不透明')).toBeInTheDocument();
     expect(screen.getByText('数量：1')).toBeInTheDocument();
     expect(screen.queryByText('1.00')).not.toBeInTheDocument();
+  });
+
+  it('keeps the legacy cost estimate visible when an old job has no exact quote', () => {
+    render(
+      <CompletedJobCard
+        job={makeCompletedJob({
+          imageQuote: undefined,
+          costEstimate: { currency: 'CNY', min: 0.08, max: 0.13, source: 'gray-log-estimate' },
+          billingStatus: 'pending-newapi-check',
+        })}
+        onClear={vi.fn()}
+        onRetry={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('约 ¥0.08-0.13')).toBeInTheDocument();
+    expect(screen.getByText('实际扣费待爱词元记录核对')).toBeInTheDocument();
+  });
+
+  it('uses the quoted display name for a dynamic catalog model', () => {
+    render(
+      <CompletedJobCard
+        job={makeCompletedJob({
+          model: 'catalog-image-premium',
+          imageQuote: {
+            ...makeCompletedJob().imageQuote!,
+            model: 'catalog-image-premium',
+            displayName: 'AmoToken Image Premium',
+          },
+        })}
+        onClear={vi.fn()}
+        onRetry={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText((_, element) => element?.tagName === 'P' && element.textContent?.startsWith('AmoToken Image Premium·2K') === true)).toBeInTheDocument();
+    expect(screen.queryByText('catalog-image-premium')).not.toBeInTheDocument();
   });
 
   it('keeps the full prompt available on hover when the visible row is truncated', () => {
@@ -181,7 +231,7 @@ describe('CompletedJobCard v0.6 metadata', () => {
       sourceRef: 'job-1',
     }));
     expect(assetStoreMocks.addTextAsset.mock.calls[0][0].content).toContain('一只小鲨鱼戴上海盗帽');
-    expect(assetStoreMocks.addTextAsset.mock.calls[0][0].content).toContain('模型：AmoToken GPT Image 2');
+    expect(assetStoreMocks.addTextAsset.mock.calls[0][0].content).toContain('模型：GPT Image 2');
     expect(assetStoreMocks.addTextAsset.mock.calls[0][0].content).toContain('尺寸：2K');
     expect(assetStoreMocks.addTextAsset.mock.calls[0][0].content).toContain('质量：高');
   });

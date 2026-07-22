@@ -387,8 +387,8 @@ export function WorkspaceShell() {
                   <div className={cn(wideMode && 'xl:h-full xl:min-h-0 xl:overflow-y-auto xl:pr-1')}>
                     <ImageGenerationWorkbench
                       wideMode={wideMode}
-                      onSubmitText={data => void submitTextToImage(data, submitActions, handleSubmitError)}
-                      onSubmitImage={data => void submitImageToImage(data, submitActions, handleSubmitError)}
+                      onSubmitText={data => submitTextToImage(data, submitActions, handleSubmitError)}
+                      onSubmitImage={data => submitImageToImage(data, submitActions, handleSubmitError)}
                       disabled={!workspace.hasApiKey}
                       onConfigureApiKey={() => setSettingsOpen(true)}
                       onDraftConsumed={handleImageDraftConsumed}

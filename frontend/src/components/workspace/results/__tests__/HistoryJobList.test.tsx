@@ -18,7 +18,21 @@ function makeJob(overrides: Partial<StoredJob> = {}): StoredJob {
     error: 'API 请求失败: 502 Upstream request failed',
     failureReason: 'upstream',
     failureStage: '上游生成',
-    billingStatus: 'pending-newapi-check',
+    imageQuote: {
+      catalogVersion: 'image-v11',
+      model: 'gpt-image-2',
+      displayName: 'GPT Image 2',
+      mode: 'generation',
+      resolutionTier: '1K',
+      size: '1024x1024',
+      quality: 'medium',
+      count: 1,
+      referenceImageCount: 0,
+      unitPrice: 0.06,
+      totalPrice: 0.06,
+      currency: 'API_CREDIT',
+      available: true,
+    },
     ...overrides,
   };
 }
@@ -76,6 +90,7 @@ describe('HistoryJobList v0.6 task cards', () => {
     expect(screen.getByText(/风格：自动/)).toBeInTheDocument();
     expect(screen.getByText(/背景：自动/)).toBeInTheDocument();
     expect(screen.getByText(/数量：1/)).toBeInTheDocument();
+    expect(screen.getByText('预计消耗 $0.06 API 额度')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '复制完整提示词' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /重试/ })).toBeInTheDocument();
     expect(screen.queryByText(/失败阶段/)).not.toBeInTheDocument();

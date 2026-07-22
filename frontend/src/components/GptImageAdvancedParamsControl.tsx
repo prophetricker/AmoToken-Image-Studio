@@ -21,6 +21,7 @@ interface GptImageAdvancedParamsControlProps {
   disabled?: boolean;
   variant?: 'ghost' | 'outline';
   size?: 'xs' | 'sm';
+  qualityOptions?: { value: GptImageQuality; label: string }[];
 }
 
 function isDefaultValue(value: GptImageAdvancedParams): boolean {
@@ -45,6 +46,7 @@ export function GptImageAdvancedParamsControl({
   disabled = false,
   variant = 'ghost',
   size = 'xs',
+  qualityOptions = GPT_IMAGE_QUALITY_OPTIONS,
 }: GptImageAdvancedParamsControlProps) {
   const triggerClass = cn(
     buttonVariants({ variant, size }),
@@ -65,7 +67,7 @@ export function GptImageAdvancedParamsControl({
         <div className="space-y-3">
           <ParamGroup
             label="质量"
-            options={GPT_IMAGE_QUALITY_OPTIONS}
+            options={qualityOptions}
             value={value.quality}
             onSelect={updateQuality}
           />

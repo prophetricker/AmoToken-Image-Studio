@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  bindAmoTokenImageQuote,
   fetchAmoTokenImageQuote,
   formatAmoTokenImageQuote,
+  isAmoTokenImageQuoteFreshForToken,
   toAmoTokenImageOperationMode,
 } from '@/lib/amotoken-image-quote';
 
@@ -74,5 +76,28 @@ describe('AmoToken image product quotes', () => {
       count: 1,
       referenceImageCount: 0,
     }, fetchImpl)).rejects.toThrow('当前规格暂不可用');
+  });
+
+  it('binds a quote to one token for a short non-serialized lifetime', () => {
+    const quote = bindAmoTokenImageQuote({
+      catalogVersion: 'image-v11',
+      model: 'gpt-image-2',
+      displayName: 'GPT Image 2',
+      mode: 'generation',
+      resolutionTier: '1K',
+      size: '1024x1024',
+      quality: 'medium',
+      count: 1,
+      referenceImageCount: 0,
+      unitPrice: 0.06,
+      totalPrice: 0.06,
+      currency: 'API_CREDIT',
+      available: true,
+    }, 'sk-user-a', 1_000);
+
+    expect(isAmoTokenImageQuoteFreshForToken(quote, 'sk-user-a', 30_999)).toBe(true);
+    expect(isAmoTokenImageQuoteFreshForToken(quote, 'sk-user-b', 30_999)).toBe(false);
+    expect(isAmoTokenImageQuoteFreshForToken(quote, 'sk-user-a', 31_001)).toBe(false);
+    expect(JSON.stringify(quote)).not.toContain('sk-user-a');
   });
 });

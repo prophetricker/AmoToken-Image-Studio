@@ -851,6 +851,7 @@ function createTask(body, req) {
     gptImageStyle: body.gptImageStyle,
     gptImageBackground: body.gptImageBackground,
     parallelCount: body.parallelCount,
+    imageQuote: body.imageQuote,
     images: body.images.map(img => ({ mimeType: img.mimeType })),
   };
   const tx = db.transaction(() => {

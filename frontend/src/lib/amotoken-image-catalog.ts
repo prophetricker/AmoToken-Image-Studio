@@ -20,10 +20,27 @@ export interface AmoTokenImageCatalog {
   models: AmoTokenImageCatalogModel[];
 }
 
+export interface AmoTokenImageResolutionTier {
+  value: string;
+  sizes: string[];
+  qualities: string[];
+}
+
+export interface AmoTokenImageModeCapabilities {
+  model: string;
+  displayName: string;
+  mode: AmoTokenImageOperationMode;
+  maxCount: number;
+  maxReferenceImages: number;
+  resolutionTiers: AmoTokenImageResolutionTier[];
+}
+
 type FetchLike = typeof fetch;
 
 const CATALOG_CACHE_TTL_MS = 30_000;
 const catalogCache = new Map<string, { expiresAt: number; catalog: AmoTokenImageCatalog }>();
+let activeCatalogToken = '';
+let activeCatalog: AmoTokenImageCatalog | null = null;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -99,8 +116,102 @@ export function normalizeAmoTokenImageCatalog(payload: unknown): AmoTokenImageCa
   return { version, models: Array.from(models.values()) };
 }
 
+export function getAmoTokenImageModeCapabilities(
+  catalog: AmoTokenImageCatalog,
+  modelId: string,
+  mode: AmoTokenImageOperationMode,
+): AmoTokenImageModeCapabilities | null {
+  const model = catalog.models.find(item => item.id === modelId);
+  if (!model) return null;
+
+  const tiers = new Map<string, AmoTokenImageResolutionTier>();
+  for (const product of model.products) {
+    if (product.mode !== mode) continue;
+    const tier = tiers.get(product.resolutionTier) || {
+      value: product.resolutionTier,
+      sizes: [],
+      qualities: [],
+    };
+    for (const size of product.sizes) {
+      if (!tier.sizes.includes(size)) tier.sizes.push(size);
+    }
+    if (!tier.qualities.includes(product.quality)) tier.qualities.push(product.quality);
+    tiers.set(product.resolutionTier, tier);
+  }
+  if (tiers.size === 0) return null;
+
+  return {
+    model: model.id,
+    displayName: model.displayName,
+    mode,
+    maxCount: model.maxCount,
+    maxReferenceImages: model.maxReferenceImages,
+    resolutionTiers: Array.from(tiers.values()),
+  };
+}
+
+export function getAmoTokenImageModelOptions(
+  catalog: AmoTokenImageCatalog,
+  mode: AmoTokenImageOperationMode,
+): Array<{ value: string; label: string; recommended: boolean }> {
+  return catalog.models
+    .filter(model => model.products.some(product => product.mode === mode))
+    .map((model, index) => ({
+      value: model.id,
+      label: model.displayName,
+      recommended: index === 0,
+    }));
+}
+
+export function getAmoTokenImageProductSizes(
+  catalog: AmoTokenImageCatalog,
+  modelId: string,
+  mode: AmoTokenImageOperationMode,
+  resolutionTier: string,
+  quality: string,
+): string[] {
+  const model = catalog.models.find(item => item.id === modelId);
+  if (!model) return [];
+  return Array.from(new Set(model.products
+    .filter(product => (
+      product.mode === mode
+      && product.resolutionTier === resolutionTier
+      && product.quality === quality
+    ))
+    .flatMap(product => product.sizes)));
+}
+
+const LEGACY_MODEL_ALIASES = new Set([
+  'amotoken-gpt-image-2',
+  'amotoken-gpt-image-2-1k-backup',
+  'amotoken-gpt-image-2-4k-gray',
+  'gpt-image-2-1k-backup',
+]);
+
+export function normalizeAmoTokenCatalogModelId(
+  candidate: string | undefined,
+  catalog: AmoTokenImageCatalog,
+  mode: AmoTokenImageOperationMode,
+): string {
+  const options = getAmoTokenImageModelOptions(catalog, mode);
+  if (candidate && options.some(option => option.value === candidate)) return candidate;
+  if (candidate && LEGACY_MODEL_ALIASES.has(candidate)) {
+    const stable = options.find(option => option.value === 'gpt-image-2');
+    if (stable) return stable.value;
+  }
+  return options[0]?.value || '';
+}
+
 export function clearAmoTokenImageCatalogCache(): void {
   catalogCache.clear();
+  activeCatalogToken = '';
+  activeCatalog = null;
+}
+
+export function isModelInCurrentAmoTokenImageCatalog(token: string, modelId: string): boolean {
+  const normalizedToken = token.trim();
+  if (!normalizedToken || normalizedToken !== activeCatalogToken) return false;
+  return activeCatalog?.models.some(model => model.id === modelId) === true;
 }
 
 export async function fetchAmoTokenImageCatalog(
@@ -109,6 +220,12 @@ export async function fetchAmoTokenImageCatalog(
 ): Promise<AmoTokenImageCatalog> {
   const normalizedToken = token.trim();
   if (!normalizedToken) throw new Error('请先粘贴 AmoToken 令牌');
+
+  if (activeCatalogToken !== normalizedToken) {
+    catalogCache.clear();
+    activeCatalogToken = normalizedToken;
+    activeCatalog = null;
+  }
 
   const cached = catalogCache.get(normalizedToken);
   if (cached && cached.expiresAt > Date.now()) return cached.catalog;
@@ -125,6 +242,9 @@ export async function fetchAmoTokenImageCatalog(
   }
 
   const catalog = normalizeAmoTokenImageCatalog(await response.json());
-  catalogCache.set(normalizedToken, { expiresAt: Date.now() + CATALOG_CACHE_TTL_MS, catalog });
+  if (activeCatalogToken === normalizedToken) {
+    catalogCache.set(normalizedToken, { expiresAt: Date.now() + CATALOG_CACHE_TTL_MS, catalog });
+    activeCatalog = catalog;
+  }
   return catalog;
 }

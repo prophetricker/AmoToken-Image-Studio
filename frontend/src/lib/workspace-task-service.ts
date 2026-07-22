@@ -16,8 +16,8 @@ import {
 } from '@/lib/model-capabilities';
 import { generateUUID } from '@/lib/uuid';
 import { downloadAndStoreImages, type DownloadResult, type ImageDownloadProgressItem } from '@/lib/image-downloader';
-import { estimateImageCost } from '@/lib/image-cost-estimator';
 import { classifyFailureFromMessage, getTaskFailureDisplayInfo } from '@/lib/task-failure';
+import { isAmoTokenImageQuoteFreshForToken, type AmoTokenImageQuote } from '@/lib/amotoken-image-quote';
 
 export interface TextToImageSubmitInput {
   prompts: string[];
@@ -30,6 +30,7 @@ export interface TextToImageSubmitInput {
   gptImageStyle: GptImageStyle;
   gptImageBackground: GptImageBackground;
   parallelCount: ParallelCount;
+  quote: AmoTokenImageQuote;
 }
 
 export interface ImageToImageSubmitInput {
@@ -44,6 +45,7 @@ export interface ImageToImageSubmitInput {
   gptImageStyle: GptImageStyle;
   gptImageBackground: GptImageBackground;
   parallelCount: ParallelCount;
+  quote: AmoTokenImageQuote;
 }
 
 export interface SubmitActions {
@@ -100,6 +102,27 @@ function buildImageReferences(files: ImageToImageSubmitInput['files']): ImageRef
   }));
 }
 
+function quoteMatchesSubmission(
+  quote: AmoTokenImageQuote,
+  input: TextToImageSubmitInput | ImageToImageSubmitInput,
+  mode: AmoTokenImageQuote['mode'],
+  providerModel: string,
+  referenceImageCount: number,
+  token: string,
+): boolean {
+  return Boolean(input.customSize)
+    && isAmoTokenImageQuoteFreshForToken(quote, token)
+    && quote.available === true
+    && quote.model === providerModel
+    && quote.mode === mode
+    && quote.resolutionTier === input.outputSize
+    && quote.size === input.customSize
+    && quote.quality === input.gptImageQuality
+    && quote.count === input.parallelCount
+    && quote.referenceImageCount === referenceImageCount
+    && quote.currency === 'API_CREDIT';
+}
+
 function createBaseJob(
   mode: StoredJob['mode'],
   prompt: string,
@@ -112,6 +135,7 @@ function createBaseJob(
   gptImageStyle: GptImageStyle,
   gptImageBackground: GptImageBackground,
   parallelCount: ParallelCount,
+  imageQuote: AmoTokenImageQuote,
   refImages?: StoredJob['refImages']
 ): StoredJob {
   const advancedParams = getGptImageAdvancedParamsForModel(model as ModelId, {
@@ -139,14 +163,7 @@ function createBaseJob(
     parallelCount,
     created_at: now,
     startedAt: now,
-    costEstimate: estimateImageCost({
-      mode,
-      outputSize,
-      quality: advancedParams.quality,
-      count: parallelCount,
-      referenceImageCount,
-    }),
-    billingStatus: 'unverified',
+    imageQuote,
     refImages,
     referenceImageCount,
   };
@@ -356,13 +373,18 @@ export async function submitTextToImage(
   input: TextToImageSubmitInput,
   actions: SubmitActions,
   onError: (message: string) => void
-): Promise<void> {
+): Promise<boolean> {
   const provider = resolveImageTaskProvider(input.model);
   const apiKey = provider.apiKey;
 
   if (!apiKey) {
     onError('请先粘贴 AmoToken 令牌');
-    return;
+    return false;
+  }
+
+  if (!quoteMatchesSubmission(input.quote, input, 'generation', provider.modelId, 0, apiKey)) {
+    onError('当前生图规格与报价不一致，请重新选择后再试');
+    return false;
   }
 
   for (const prompt of input.prompts) {
@@ -377,7 +399,8 @@ export async function submitTextToImage(
       input.gptImageQuality,
       input.gptImageStyle,
       input.gptImageBackground,
-      input.parallelCount
+      input.parallelCount,
+      input.quote
     );
     actions.addJob(job);
 
@@ -398,6 +421,7 @@ export async function submitTextToImage(
         gptImageBackground: input.gptImageBackground,
         parallelCount: input.parallelCount,
         images: [],
+        imageQuote: input.quote,
       });
 
       actions.replaceJob(job.id, current => ({
@@ -409,24 +433,26 @@ export async function submitTextToImage(
       await actions.failJob(job.id, error instanceof Error ? error.message : String(error));
     }
   }
+
+  return true;
 }
 
 export async function submitImageToImage(
   input: ImageToImageSubmitInput,
   actions: SubmitActions,
   onError: (message: string) => void
-): Promise<void> {
+): Promise<boolean> {
   const provider = resolveImageTaskProvider(input.model);
   const apiKey = provider.apiKey;
 
   if (!apiKey) {
     onError('请先粘贴 AmoToken 令牌');
-    return;
+    return false;
   }
 
-  if (input.files.length > 4) {
-    onError('多图融合最多支持 4 张参考图');
-    return;
+  if (!quoteMatchesSubmission(input.quote, input, 'edit', provider.modelId, input.files.length, apiKey)) {
+    onError('当前生图规格与报价不一致，请重新选择后再试');
+    return false;
   }
 
   const refImages = input.files.map(file => ({
@@ -448,6 +474,7 @@ export async function submitImageToImage(
     input.gptImageStyle,
     input.gptImageBackground,
     input.parallelCount,
+    input.quote,
     refImages
   );
 
@@ -470,6 +497,7 @@ export async function submitImageToImage(
       gptImageBackground: input.gptImageBackground,
       parallelCount: input.parallelCount,
       images: imageReferences,
+      imageQuote: input.quote,
     });
 
     actions.replaceJob(job.id, current => ({
@@ -480,4 +508,6 @@ export async function submitImageToImage(
   } catch (error) {
     await actions.failJob(job.id, error instanceof Error ? error.message : String(error));
   }
+
+  return true;
 }

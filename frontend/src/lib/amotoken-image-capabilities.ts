@@ -35,7 +35,7 @@ export const AMOTOKEN_IMAGE_CAPABILITIES: AmoTokenImageCapability[] = [
     id: AMOTOKEN_IMAGE_MODEL_1K_BACKUP_ID,
     modelId: 'gpt-image-2-1k-backup',
     provider: 'openai',
-    visible: true,
+    visible: false,
     gray: false,
     modes: ['text-to-image', 'image-to-image', 'multi-image-fusion'],
     allowedSizes: ['1024x1024', '1536x1024', '1024x1536'],

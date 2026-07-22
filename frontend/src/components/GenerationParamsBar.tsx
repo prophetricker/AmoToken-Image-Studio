@@ -8,7 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { CustomSizeDialog } from '@/components/CustomSizeDialog';
 import { GptImageAdvancedParamsControl } from '@/components/GptImageAdvancedParamsControl';
 import { cn } from '@/lib/utils';
-import { MODEL_OPTIONS, isGptImageModel, type ModelId } from '@/lib/gemini-config';
+import { MODEL_OPTIONS, isGptImageModel, type ModelId, type ModelOption } from '@/lib/gemini-config';
 import {
   getAspectRatioOptions,
   getCustomSizeMaxSide,
@@ -20,6 +20,7 @@ import {
   supportsCustomSize,
   supportsGptImageAdvancedParams,
   type GptImageAdvancedParams,
+  type GptImageQuality,
   type ParallelCount,
 } from '@/lib/model-capabilities';
 import type { OutputSize, AspectRatio } from '@/lib/job-store';
@@ -41,13 +42,20 @@ interface GenerationParamsBarProps {
   onChange: (patch: Partial<GenerationParamsValue>) => void;
   size?: ButtonSize;
   className?: string;
+  catalogOptions?: {
+    models: Array<ModelOption & { recommended?: boolean }>;
+    sizes: { value: OutputSize; label: string }[];
+    aspectRatios: { value: AspectRatio; label: string; resolution: string }[];
+    qualities: { value: GptImageQuality; label: string }[];
+    maxParallelCount: number;
+  };
 }
 
 /**
  * 共享的「模型 + 生成参数」控件条（自宿主 TextToImageForm 抽取）。受控：对外只发最终 patch，
  * 模型/分辨率联动级联在内部完成。文生图与无限画布编排节点共用，保证展示一致并支持自定义分辨率。
  */
-export function GenerationParamsBar({ value, onChange, size = 'xs', className }: GenerationParamsBarProps) {
+export function GenerationParamsBar({ value, onChange, size = 'xs', className, catalogOptions }: GenerationParamsBarProps) {
   const [modelPopoverOpen, setModelPopoverOpen] = useState(false);
   const [sizePopoverOpen, setSizePopoverOpen] = useState(false);
   const [aspectPopoverOpen, setAspectPopoverOpen] = useState(false);
@@ -56,18 +64,23 @@ export function GenerationParamsBar({ value, onChange, size = 'xs', className }:
   const [customSizeDialogOpen, setCustomSizeDialogOpen] = useState(false);
 
   const model = value.model;
-  const sizeOptions = getSizeOptions(model);
-  const aspectRatioOptions = getAspectRatioOptions(model, value.outputSize);
+  const modelOptions: Array<ModelOption & { recommended?: boolean }> = catalogOptions?.models || MODEL_OPTIONS;
+  const sizeOptions = catalogOptions?.sizes || getSizeOptions(model);
+  const aspectRatioOptions = catalogOptions?.aspectRatios || getAspectRatioOptions(model, value.outputSize);
   const supportsTemperature = !isGptImageModel(model);
-  const supportsAdvancedParams = supportsGptImageAdvancedParams(model);
-  const autoLayoutAvailable = supportsAutoLayout(model);
+  const supportsAdvancedParams = Boolean(catalogOptions) || supportsGptImageAdvancedParams(model);
+  const autoLayoutAvailable = !catalogOptions && supportsAutoLayout(model);
   const autoLayoutLocked = autoLayoutAvailable && value.outputSize === 'auto';
-  const showSizeControl = model !== 'gpt-image-2';
-  const customSizeAvailable = supportsCustomSize(model) && !autoLayoutLocked;
+  const showSizeControl = Boolean(catalogOptions) || model !== 'gpt-image-2';
+  const customSizeAvailable = !catalogOptions && supportsCustomSize(model) && !autoLayoutLocked;
   const customSizeMaxSide = getCustomSizeMaxSide(model) || 2048;
   const displaySizeLabel = value.customSize || getOutputSizeLabel(value.outputSize);
-  const modelLabel = MODEL_OPTIONS.find(o => o.value === model)?.label || model;
+  const modelLabel = modelOptions.find(o => o.value === model)?.label || model;
   const handleModelChange = (newModel: ModelId) => {
+    if (catalogOptions) {
+      onChange({ model: newModel });
+      return;
+    }
     const nextGpt = getGptImageAdvancedParamsForModel(newModel, value.gptImageAdvancedParams);
     const nextSizeOptions = getSizeOptions(newModel);
     const nextOutputSize: OutputSize = value.outputSize === 'auto' && supportsAutoLayout(newModel) ? 'auto' : (nextSizeOptions.find(s => s.value === value.outputSize)?.value || nextSizeOptions[0].value);
@@ -118,7 +131,7 @@ export function GenerationParamsBar({ value, onChange, size = 'xs', className }:
           <span className="max-w-40 shrink truncate text-xs">{modelLabel}</span>
         </PopoverTrigger>
         <PopoverContent className="w-48 p-1" align="start">
-          {MODEL_OPTIONS.map((option) => (
+          {modelOptions.map((option) => (
             <button
               key={option.value}
               onClick={() => {
@@ -127,7 +140,7 @@ export function GenerationParamsBar({ value, onChange, size = 'xs', className }:
               }}
               className={cn('w-full text-left px-2.5 py-1.5 rounded-md text-sm hover:bg-muted', model === option.value && 'bg-muted font-medium')}
             >
-              {option.label}
+              {option.label}{option.recommended ? '（推荐）' : ''}
             </button>
           ))}
         </PopoverContent>
@@ -203,7 +216,7 @@ export function GenerationParamsBar({ value, onChange, size = 'xs', className }:
           <span className="text-[11px]">x{value.parallelCount}</span>
         </PopoverTrigger>
         <PopoverContent className="w-36 p-1" align="start">
-          {[1, 2, 3, 4].map((count) => (
+          {[1, 2, 3, 4].slice(0, catalogOptions?.maxParallelCount || 4).map((count) => (
             <button
               key={count}
               onClick={() => handleParallelCountChange(count as ParallelCount)}
@@ -217,7 +230,13 @@ export function GenerationParamsBar({ value, onChange, size = 'xs', className }:
       </Popover>
 
       {supportsAdvancedParams && (
-        <GptImageAdvancedParamsControl value={value.gptImageAdvancedParams} onChange={(next) => onChange({ gptImageAdvancedParams: next })} variant="outline" size={size} />
+        <GptImageAdvancedParamsControl
+          value={value.gptImageAdvancedParams}
+          onChange={(next) => onChange({ gptImageAdvancedParams: next })}
+          qualityOptions={catalogOptions?.qualities}
+          variant="outline"
+          size={size}
+        />
       )}
 
       {supportsTemperature && (

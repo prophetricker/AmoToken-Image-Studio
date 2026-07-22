@@ -28,6 +28,18 @@ export interface AmoTokenImageQuote {
 type FetchLike = typeof fetch;
 type NovaImageMode = 'text-to-image' | 'image-to-image' | 'multi-image-fusion';
 
+const QUOTE_BINDING = Symbol('amotoken-image-quote-binding');
+const QUOTE_MAX_AGE_MS = 30_000;
+
+interface QuoteBinding {
+  token: string;
+  quotedAt: number;
+}
+
+type BoundAmoTokenImageQuote = AmoTokenImageQuote & {
+  [QUOTE_BINDING]?: QuoteBinding;
+};
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -74,6 +86,33 @@ function normalizeQuote(payload: unknown): AmoTokenImageQuote {
   return quote as AmoTokenImageQuote;
 }
 
+export function bindAmoTokenImageQuote(
+  quote: AmoTokenImageQuote,
+  token: string,
+  quotedAt = Date.now(),
+): AmoTokenImageQuote {
+  Object.defineProperty(quote, QUOTE_BINDING, {
+    configurable: true,
+    enumerable: false,
+    value: { token: token.trim(), quotedAt },
+  });
+  return quote;
+}
+
+export function isAmoTokenImageQuoteFreshForToken(
+  quote: AmoTokenImageQuote,
+  token: string,
+  now = Date.now(),
+): boolean {
+  const binding = (quote as BoundAmoTokenImageQuote)[QUOTE_BINDING];
+  return Boolean(
+    binding
+    && binding.token === token.trim()
+    && now >= binding.quotedAt
+    && now - binding.quotedAt <= QUOTE_MAX_AGE_MS,
+  );
+}
+
 export async function fetchAmoTokenImageQuote(
   token: string,
   input: AmoTokenImageQuoteInput,
@@ -103,7 +142,7 @@ export async function fetchAmoTokenImageQuote(
       ? 'AmoToken 令牌无效或无权使用该生图模型'
       : '暂时无法获取生图报价，请稍后重试');
   }
-  return normalizeQuote(await response.json());
+  return bindAmoTokenImageQuote(normalizeQuote(await response.json()), normalizedToken);
 }
 
 export function formatAmoTokenImageQuote(quote: AmoTokenImageQuote): string {

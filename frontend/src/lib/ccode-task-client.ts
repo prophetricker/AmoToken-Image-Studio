@@ -6,11 +6,16 @@ import {
   getImageModelById,
   getTextModelById,
   loadRegistry,
+  AMOTOKEN_IMAGE_MODEL_1K_BACKUP_ID,
+  AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID,
+  AMOTOKEN_IMAGE_MODEL_ID,
   type ProviderProtocol,
 } from '@/lib/nova-models';
+import type { AmoTokenImageQuote } from '@/lib/amotoken-image-quote';
 import {
   normalizeModelBaseUrl,
 } from '@/lib/model-endpoints';
+import { isModelInCurrentAmoTokenImageCatalog } from '@/lib/amotoken-image-catalog';
 
 export interface ImageReference {
   data: string;
@@ -47,6 +52,7 @@ export interface CreateNovaTaskInput {
   gptImageBackground?: GptImageBackground;
   parallelCount: number;
   images: ImageReference[];
+  imageQuote?: AmoTokenImageQuote;
 }
 
 export interface NovaTaskResponse {
@@ -281,14 +287,24 @@ export async function checkModelsAvailability(
 
 export function resolveImageTaskProvider(modelId: string): { apiKey: string; baseUrl: string; protocol: ProviderProtocol; modelId: string } {
   const registry = loadRegistry();
-  const model = getImageModelById(registry, modelId);
+  const configuredModel = getImageModelById(registry, modelId);
+  const amoTokenModel = getImageModelById(registry, AMOTOKEN_IMAGE_MODEL_ID);
+  const legacyModelId = modelId === AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID
+    ? amoTokenModel?.modelId
+    : modelId === AMOTOKEN_IMAGE_MODEL_1K_BACKUP_ID
+      ? 'gpt-image-2-1k-backup'
+      : null;
+  const catalogModelId = amoTokenModel && isModelInCurrentAmoTokenImageCatalog(amoTokenModel.apiKey, modelId)
+    ? modelId
+    : null;
+  const model = configuredModel || ((legacyModelId || catalogModelId) ? amoTokenModel : undefined);
   if (!model) throw new Error(`未找到图片模型配置: ${modelId}`);
   const normalizedBaseUrl = normalizeModelBaseUrl(model.protocol, model.baseUrl);
   return {
     apiKey: model.apiKey,
     baseUrl: normalizedBaseUrl,
     protocol: model.protocol,
-    modelId: model.modelId,
+    modelId: configuredModel ? model.modelId : legacyModelId || catalogModelId || model.modelId,
   };
 }
 

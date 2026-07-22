@@ -19,6 +19,7 @@ import { addTextAsset, getAssetBlob, type ImageAsset, type TextAsset } from '@/l
 import { MODEL_IMAGE_LIMITS, MODEL_OPTIONS, type ModelId } from '@/lib/gemini-config';
 import {
   DEFAULT_GPT_IMAGE_ADVANCED_PARAMS,
+  GPT_IMAGE_QUALITY_OPTIONS,
   detectClosestAspectRatio,
   getAspectRatioOptions,
   getCustomSizeMaxSide,
@@ -39,9 +40,22 @@ import { dispatchImageActionToast } from '@/lib/image-actions';
 import type { AspectRatio, OutputSize, RefImageData } from '@/lib/job-store';
 import type { ImageFormSettings } from '@/lib/form-settings';
 import type { ImageToImageSubmitInput, TextToImageSubmitInput } from '@/lib/workspace-task-service';
-import { estimateImageCost, formatCostEstimate } from '@/lib/image-cost-estimator';
 import { getSensitivePromptWarning } from '@/lib/task-failure';
-import { AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID } from '@/lib/nova-models';
+import { getAmoTokenToken } from '@/lib/nova-models';
+import {
+  fetchAmoTokenImageCatalog,
+  getAmoTokenImageModeCapabilities,
+  getAmoTokenImageModelOptions,
+  getAmoTokenImageProductSizes,
+  normalizeAmoTokenCatalogModelId,
+  type AmoTokenImageCatalog,
+  type AmoTokenImageOperationMode,
+} from '@/lib/amotoken-image-catalog';
+import {
+  fetchAmoTokenImageQuote,
+  formatAmoTokenImageQuote,
+  type AmoTokenImageQuote,
+} from '@/lib/amotoken-image-quote';
 import { cn } from '@/lib/utils';
 
 const WORKBENCH_SETTINGS_KEY = 'nova-image-generation-settings';
@@ -51,6 +65,23 @@ const MAX_ASSET_IMPORTS = 5;
 
 type WorkbenchMode = 'text-to-image' | 'image-to-image';
 type WorkbenchSettings = ImageFormSettings;
+type CatalogStatus = 'idle' | 'loading' | 'ready' | 'error';
+
+const ASPECT_RATIO_VALUES: AspectRatio[] = ['1:1', '1:4', '1:8', '2:3', '3:2', '3:4', '4:1', '4:3', '4:5', '5:4', '8:1', '9:16', '16:9', '21:9'];
+
+function greatestCommonDivisor(a: number, b: number): number {
+  return b === 0 ? a : greatestCommonDivisor(b, a % b);
+}
+
+function getAspectRatioForSize(size: string): AspectRatio {
+  const match = size.match(/^(\d+)x(\d+)$/);
+  if (!match) return '1:1';
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  const divisor = greatestCommonDivisor(width, height);
+  const ratio = `${width / divisor}:${height / divisor}` as AspectRatio;
+  return ASPECT_RATIO_VALUES.includes(ratio) ? ratio : '1:1';
+}
 
 interface UploadedFile {
   id: string;
@@ -63,8 +94,8 @@ interface UploadedFile {
 
 interface ImageGenerationWorkbenchProps {
   wideMode?: boolean;
-  onSubmitText: (data: TextToImageSubmitInput) => void;
-  onSubmitImage: (data: ImageToImageSubmitInput) => void;
+  onSubmitText: (data: TextToImageSubmitInput) => boolean | void | Promise<boolean | void>;
+  onSubmitImage: (data: ImageToImageSubmitInput) => boolean | void | Promise<boolean | void>;
   disabled?: boolean;
   onDraftConsumed?: () => void;
   onConfigureApiKey?: () => void;
@@ -142,6 +173,7 @@ export function ImageGenerationWorkbench({
   const [pendingFiles, setPendingFiles] = useState<UploadedFile[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const formRef = useRef<HTMLDivElement>(null);
+  const quoteRequestIdRef = useRef(0);
 
   const [model, setModel] = useState<ModelId>('gemini-3-pro-image-preview');
   const [outputSize, setOutputSize] = useState<OutputSize>('1K');
@@ -151,15 +183,23 @@ export function ImageGenerationWorkbench({
   const [gptImageAdvancedParams, setGptImageAdvancedParams] = useState<GptImageAdvancedParams>(DEFAULT_GPT_IMAGE_ADVANCED_PARAMS);
   const [parallelCount, setParallelCount] = useState<ParallelCount>(1);
   const [settingsReady, setSettingsReady] = useState(false);
+  const [catalog, setCatalog] = useState<AmoTokenImageCatalog | null>(null);
+  const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>('idle');
+  const [catalogMessage, setCatalogMessage] = useState('');
+  const [quote, setQuote] = useState<AmoTokenImageQuote | null>(null);
+  const [quoteStatus, setQuoteStatus] = useState<CatalogStatus>('idle');
+  const [quoteMessage, setQuoteMessage] = useState('');
 
   const [isDragOver, setIsDragOver] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [missingApiKeyDialogOpen, setMissingApiKeyDialogOpen] = useState(false);
   const [quickPromptOpen, setQuickPromptOpen] = useState(false);
   const [assetPickerOpen, setAssetPickerOpen] = useState(false);
   const [textAssetPickerOpen, setTextAssetPickerOpen] = useState(false);
   const [pendingTextAsset, setPendingTextAsset] = useState<TextAsset | null>(null);
+  const amoToken = getAmoTokenToken();
 
   const [optimizeOpen, setOptimizeOpen] = useState(false);
   const [optimizedText, setOptimizedText] = useState('');
@@ -167,21 +207,62 @@ export function ImageGenerationWorkbench({
   const [optimizeError, setOptimizeError] = useState<string | null>(null);
   const optimizeHandleRef = useRef<StreamPromptOptimizeHandle | null>(null);
 
-  const modelLimit = MODEL_IMAGE_LIMITS[model] || { max: 1, description: '最多 1 张参考图片' };
-  const maxImages = modelLimit.max;
-  const aspectRatioOptions = useMemo(() => getAspectRatioOptions(model, outputSize), [model, outputSize]);
   const currentMode: WorkbenchMode = pendingFiles.length > 0 ? 'image-to-image' : 'text-to-image';
+  const operationMode: AmoTokenImageOperationMode = currentMode === 'text-to-image' ? 'generation' : 'edit';
+  const selectedModel = (catalog
+    ? normalizeAmoTokenCatalogModelId(model, catalog, operationMode)
+    : model) as ModelId;
+  const catalogCapabilities = useMemo(() => (
+    catalog ? getAmoTokenImageModeCapabilities(catalog, selectedModel, operationMode) : null
+  ), [catalog, operationMode, selectedModel]);
+  const modelOptions = useMemo(() => (
+    catalog ? getAmoTokenImageModelOptions(catalog, operationMode) : []
+  ), [catalog, operationMode]);
+  const selectedTier = catalogCapabilities?.resolutionTiers.find(tier => tier.value === outputSize)
+    || catalogCapabilities?.resolutionTiers[0];
+  const selectedOutputSize = (selectedTier?.value || outputSize) as OutputSize;
+  const selectedQuality = (selectedTier?.qualities.includes(gptImageAdvancedParams.quality)
+    ? gptImageAdvancedParams.quality
+    : selectedTier?.qualities[0] || gptImageAdvancedParams.quality) as GptImageQuality;
+  const selectedParallelCount = Math.max(
+    1,
+    Math.min(parallelCount, catalogCapabilities?.maxCount || parallelCount),
+  ) as ParallelCount;
+  const catalogSizes = useMemo(() => (
+    catalog && selectedTier
+      ? getAmoTokenImageProductSizes(catalog, selectedModel, operationMode, selectedTier.value, selectedQuality)
+      : []
+  ), [catalog, operationMode, selectedModel, selectedQuality, selectedTier]);
+  const selectedActualSize = catalogSizes.find(size => getAspectRatioForSize(size) === aspectRatio)
+    || catalogSizes[0]
+    || '';
+  const selectedAspectRatio = selectedActualSize ? getAspectRatioForSize(selectedActualSize) : aspectRatio;
+  const selectedAdvancedParams = selectedQuality === gptImageAdvancedParams.quality
+    ? gptImageAdvancedParams
+    : { ...gptImageAdvancedParams, quality: selectedQuality };
+  const aspectRatioOptions = useMemo(() => catalogSizes.map(size => ({
+    value: getAspectRatioForSize(size),
+    label: getAspectRatioForSize(size),
+    resolution: size,
+  })).filter((option, index, options) => options.findIndex(item => item.value === option.value) === index), [catalogSizes]);
+  const modelLimit = catalogCapabilities
+    ? { max: catalogCapabilities.maxReferenceImages, description: `最多 ${catalogCapabilities.maxReferenceImages} 张参考图片` }
+    : (MODEL_IMAGE_LIMITS[model] || { max: 1, description: '最多 1 张参考图片' });
+  const maxImages = modelLimit.max;
   const autoLayoutLocked = outputSize === 'auto';
   const disabledMessage = '请先粘贴 AmoToken 令牌，保存后选择模型，就可以开始第一张图。';
-  const costEstimate = useMemo(() => estimateImageCost({
-    mode: currentMode,
-    outputSize,
-    quality: gptImageAdvancedParams.quality,
-    count: parallelCount,
-    referenceImageCount: pendingFiles.length,
-  }), [currentMode, outputSize, gptImageAdvancedParams.quality, parallelCount, pendingFiles.length]);
   const sensitivePromptWarning = useMemo(() => getSensitivePromptWarning(prompt), [prompt]);
-  const show4KGrayNotice = model === AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID && outputSize === '4K';
+  const activeQuote = quote
+    && quote.catalogVersion === catalog?.version
+    && quote.model === selectedModel
+    && quote.mode === operationMode
+    && quote.resolutionTier === selectedTier?.value
+    && quote.size === selectedActualSize
+    && quote.quality === selectedQuality
+    && quote.count === selectedParallelCount
+    && quote.referenceImageCount === pendingFiles.length
+    ? quote
+    : null;
 
   const handleParamsChange = useCallback((patch: Partial<GenerationParamsValue>) => {
     if (patch.model !== undefined) setModel(patch.model);
@@ -192,6 +273,62 @@ export function ImageGenerationWorkbench({
     if (patch.parallelCount !== undefined) setParallelCount(patch.parallelCount);
     if (patch.gptImageAdvancedParams !== undefined) setGptImageAdvancedParams(patch.gptImageAdvancedParams);
   }, []);
+
+  useEffect(() => {
+    if (disabled) return;
+    const token = amoToken;
+    if (!token) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setCatalog(null);
+      setCatalogStatus('loading');
+      setCatalogMessage('正在读取生图目录…');
+    });
+    void fetchAmoTokenImageCatalog(token).then(nextCatalog => {
+      if (cancelled) return;
+      setCatalog(nextCatalog);
+      setCatalogStatus('ready');
+      setCatalogMessage('');
+    }).catch(error => {
+      if (cancelled) return;
+      setCatalog(null);
+      setCatalogStatus('error');
+      setCatalogMessage(error instanceof Error ? error.message : '暂时无法读取生图模型，请稍后重试');
+    });
+    return () => { cancelled = true; };
+  }, [amoToken, disabled]);
+
+  useEffect(() => {
+    if (catalogStatus !== 'ready' || !catalogCapabilities || !selectedActualSize) return;
+    const token = amoToken;
+    const requestId = ++quoteRequestIdRef.current;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setQuoteStatus('loading');
+      setQuoteMessage('正在获取精确报价…');
+    });
+    void fetchAmoTokenImageQuote(token, {
+      model: selectedModel,
+      mode: operationMode,
+      size: selectedActualSize,
+      quality: selectedQuality,
+      count: selectedParallelCount,
+      referenceImageCount: pendingFiles.length,
+    }).then(nextQuote => {
+      if (cancelled || requestId !== quoteRequestIdRef.current) return;
+      setQuote(nextQuote);
+      setQuoteStatus('ready');
+      setQuoteMessage('');
+    }).catch(error => {
+      if (cancelled || requestId !== quoteRequestIdRef.current) return;
+      setQuote(null);
+      setQuoteStatus('error');
+      setQuoteMessage(error instanceof Error ? error.message : '暂时无法获取生图报价，请稍后重试');
+    });
+    return () => { cancelled = true; };
+  }, [amoToken, catalogCapabilities, catalogStatus, operationMode, pendingFiles.length, selectedActualSize, selectedModel, selectedParallelCount, selectedQuality]);
 
   useEffect(() => {
     if (!textareaRef.current) return;
@@ -259,7 +396,7 @@ export function ImageGenerationWorkbench({
   }, [initialData]);
 
   useEffect(() => {
-    if (disabled || !settingsReady || initialData) return;
+    if (disabled || !settingsReady || initialData || catalog) return;
 
     const nextModel = normalizeModel(model);
     if (!nextModel || nextModel === model) return;
@@ -285,7 +422,7 @@ export function ImageGenerationWorkbench({
     return () => {
       cancelled = true;
     };
-  }, [disabled, settingsReady, initialData, model, outputSize, customSize, aspectRatio, gptImageAdvancedParams]);
+  }, [disabled, settingsReady, initialData, catalog, model, outputSize, customSize, aspectRatio, gptImageAdvancedParams]);
 
   useEffect(() => {
     if (!settingsReady) return;
@@ -398,6 +535,7 @@ export function ImageGenerationWorkbench({
   }, [aspectRatioOptions]);
 
   const processFiles = useCallback(async (fileList: FileList | File[]) => {
+    if (submitting) return;
     const filesToProcess = Array.from(fileList).filter(f => f.type.startsWith('image/'));
     if (filesToProcess.length === 0) {
       setUploadError('请选择图像文件');
@@ -450,10 +588,10 @@ export function ImageGenerationWorkbench({
     } finally {
       setLoading(false);
     }
-  }, [autoLayoutLocked, detectImageAspectRatio, maxImages, model, modelLimit.description, pendingFiles.length]);
+  }, [autoLayoutLocked, detectImageAspectRatio, maxImages, model, modelLimit.description, pendingFiles.length, submitting]);
 
   const handleImportAssets = useCallback(async (selectedAssets: ImageAsset[]) => {
-    if (selectedAssets.length === 0) return;
+    if (submitting || selectedAssets.length === 0) return;
 
     const remainingSlots = Math.max(0, maxImages - pendingFiles.length);
     if (remainingSlots <= 0) {
@@ -512,22 +650,23 @@ export function ImageGenerationWorkbench({
     } finally {
       setLoading(false);
     }
-  }, [autoLayoutLocked, detectImageAspectRatio, maxImages, model, pendingFiles.length]);
+  }, [autoLayoutLocked, detectImageAspectRatio, maxImages, model, pendingFiles.length, submitting]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
-    if (!disabled && e.dataTransfer.files.length > 0) {
+    if (!disabled && !submitting && e.dataTransfer.files.length > 0) {
       void processFiles(e.dataTransfer.files);
     }
-  }, [disabled, processFiles]);
+  }, [disabled, processFiles, submitting]);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
-    if (!disabled) setIsDragOver(true);
+    if (!disabled && !submitting) setIsDragOver(true);
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (submitting) return;
     if (e.target.files && e.target.files.length > 0) {
       void processFiles(e.target.files);
       e.target.value = '';
@@ -536,7 +675,7 @@ export function ImageGenerationWorkbench({
 
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
-      if (disabled || loading) return;
+      if (disabled || loading || submitting) return;
       const target = e.target as HTMLElement;
       if (!formRef.current?.contains(target)) return;
       const items = e.clipboardData?.items;
@@ -555,7 +694,7 @@ export function ImageGenerationWorkbench({
     };
     document.addEventListener('paste', handlePaste);
     return () => document.removeEventListener('paste', handlePaste);
-  }, [disabled, loading, processFiles]);
+  }, [disabled, loading, processFiles, submitting]);
 
   const handleRemovePending = useCallback((id: string) => {
     setPendingFiles(prev => prev.filter(f => f.id !== id));
@@ -588,43 +727,76 @@ export function ImageGenerationWorkbench({
     }
   }, [currentMode, prompt]);
 
-  const handleSubmit = () => {
-    if (!prompt.trim() || disabled || loading) return;
+  const handleSubmit = async () => {
+    if (!prompt.trim() || disabled || loading || submitting || !activeQuote) return;
 
-    const modelWithBilling = model;
-    if (pendingFiles.length > 0) {
-      onSubmitImage({
-        prompt: prompt.trim(),
-        files: pendingFiles,
-        outputSize,
-        customSize,
-        aspectRatio,
-        temperature,
-        model: modelWithBilling,
-        gptImageQuality: gptImageAdvancedParams.quality,
-        gptImageStyle: gptImageAdvancedParams.style,
-        gptImageBackground: gptImageAdvancedParams.background,
-        parallelCount,
+    setSubmitting(true);
+    const requestId = ++quoteRequestIdRef.current;
+    const submissionToken = getAmoTokenToken();
+    setQuote(null);
+    setQuoteStatus('loading');
+    setQuoteMessage('正在确认本次生图报价…');
+
+    try {
+      const submissionQuote = await fetchAmoTokenImageQuote(submissionToken, {
+        model: selectedModel,
+        mode: operationMode,
+        size: selectedActualSize,
+        quality: selectedQuality,
+        count: selectedParallelCount,
+        referenceImageCount: pendingFiles.length,
       });
-    } else {
-      onSubmitText({
-        prompts: [prompt.trim()],
-        outputSize,
-        customSize,
-        aspectRatio,
-        temperature,
-        model: modelWithBilling,
-        gptImageQuality: gptImageAdvancedParams.quality,
-        gptImageStyle: gptImageAdvancedParams.style,
-        gptImageBackground: gptImageAdvancedParams.background,
-        parallelCount,
-      });
+      if (requestId !== quoteRequestIdRef.current) return;
+      setQuote(submissionQuote);
+      setQuoteStatus('ready');
+      setQuoteMessage('');
+
+      const modelWithBilling = selectedModel;
+      let accepted: boolean | void;
+      if (pendingFiles.length > 0) {
+        accepted = await onSubmitImage({
+          prompt: prompt.trim(),
+          files: pendingFiles,
+          outputSize: selectedOutputSize,
+          customSize: selectedActualSize || customSize,
+          aspectRatio: selectedAspectRatio,
+          temperature,
+          model: modelWithBilling,
+          gptImageQuality: selectedAdvancedParams.quality,
+          gptImageStyle: selectedAdvancedParams.style,
+          gptImageBackground: selectedAdvancedParams.background,
+          parallelCount: selectedParallelCount,
+          quote: submissionQuote,
+        });
+      } else {
+        accepted = await onSubmitText({
+          prompts: [prompt.trim()],
+          outputSize: selectedOutputSize,
+          customSize: selectedActualSize || customSize,
+          aspectRatio: selectedAspectRatio,
+          temperature,
+          model: modelWithBilling,
+          gptImageQuality: selectedAdvancedParams.quality,
+          gptImageStyle: selectedAdvancedParams.style,
+          gptImageBackground: selectedAdvancedParams.background,
+          parallelCount: selectedParallelCount,
+          quote: submissionQuote,
+        });
+      }
+
+      if (accepted === false) return;
+
+      setPendingFiles([]);
+      setPrompt('');
+      setUploadError(null);
+      onDraftConsumed?.();
+    } catch (error) {
+      setQuote(null);
+      setQuoteStatus('error');
+      setQuoteMessage(error instanceof Error ? error.message : '暂时无法获取生图报价');
+    } finally {
+      setSubmitting(false);
     }
-
-    setPendingFiles([]);
-    setPrompt('');
-    setUploadError(null);
-    onDraftConsumed?.();
   };
 
   const handleClearDraft = () => {
@@ -637,11 +809,11 @@ export function ImageGenerationWorkbench({
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && e.shiftKey) {
       e.preventDefault();
-      handleSubmit();
+      void handleSubmit();
     }
   };
 
-  const canSubmit = prompt.trim().length > 0 && !disabled && !loading;
+  const canSubmit = prompt.trim().length > 0 && !disabled && !loading && !submitting && catalogStatus === 'ready' && Boolean(activeQuote);
   const canClear = prompt.trim().length > 0 || pendingFiles.length > 0;
 
   return (
@@ -659,7 +831,7 @@ export function ImageGenerationWorkbench({
             <Button onClick={() => setMissingApiKeyDialogOpen(true)}>先粘贴 AmoToken 令牌</Button>
           </div>
         ) : (
-          <>
+          <fieldset disabled={submitting} className="m-0 min-w-0 border-0 p-0">
             <div className="p-4 pb-2">
               <div className="flex gap-3">
                 <div
@@ -732,26 +904,41 @@ export function ImageGenerationWorkbench({
 
             <div className="px-3 pt-2 pb-2 sm:px-4">
               <GenerationParamsBar
-                value={{ model, outputSize, customSize, aspectRatio, temperature, parallelCount, gptImageAdvancedParams }}
+                value={{
+                  model: selectedModel,
+                  outputSize: selectedOutputSize,
+                  customSize,
+                  aspectRatio: selectedAspectRatio,
+                  temperature,
+                  parallelCount: selectedParallelCount,
+                  gptImageAdvancedParams: selectedAdvancedParams,
+                }}
                 onChange={handleParamsChange}
+                catalogOptions={catalogCapabilities ? {
+                  models: modelOptions,
+                  sizes: catalogCapabilities.resolutionTiers.map(tier => ({ value: tier.value as OutputSize, label: tier.value })),
+                  aspectRatios: aspectRatioOptions,
+                  qualities: (selectedTier?.qualities || []).map(quality => ({
+                    value: quality as GptImageQuality,
+                    label: GPT_IMAGE_QUALITY_OPTIONS.find(option => option.value === quality)?.label || quality,
+                  })),
+                  maxParallelCount: catalogCapabilities.maxCount,
+                } : undefined}
               />
             </div>
 
             <div className="flex flex-wrap items-center gap-2 px-3 pb-2 text-xs text-muted-foreground sm:px-4">
-              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-primary">
-                预估费用：{formatCostEstimate(costEstimate)}
-              </span>
-              <span className="rounded-full bg-warning/10 px-2 py-0.5 text-warning">
-                实际扣费待爱词元记录核对
+              <span className={cn(
+                'rounded-full px-2 py-0.5',
+                 activeQuote ? 'bg-primary/10 text-primary' : quoteStatus === 'error' || catalogStatus === 'error' ? 'bg-destructive/10 text-destructive' : 'bg-muted text-muted-foreground',
+              )}>
+                {catalogStatus === 'loading' || catalogStatus === 'error'
+                  ? catalogMessage
+                   : activeQuote
+                     ? formatAmoTokenImageQuote(activeQuote)
+                    : quoteMessage || catalogMessage || '正在读取生图目录…'}
               </span>
             </div>
-
-            {show4KGrayNotice && (
-              <div className="mx-3 mb-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-5 text-warning sm:mx-4">
-                <p className="font-medium">4K 灰测提醒</p>
-                <p>预计耗时更长、费用更高，建议先用 1K 或 2K 定稿后再升到 4K；失败通常不扣费，实际以爱词元记录为准。</p>
-              </div>
-            )}
 
             {sensitivePromptWarning && (
               <div className="mx-3 mb-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning sm:mx-4">
@@ -775,11 +962,16 @@ export function ImageGenerationWorkbench({
               <Button variant="outline" size="icon" onClick={handleClearDraft} disabled={!canClear} title="清空提示词和图片">
                 <X className="w-5 h-5" />
               </Button>
-              <Button onClick={handleSubmit} disabled={!canSubmit} size="icon" title={currentMode === 'image-to-image' ? '按图生图提交' : '按文生图提交'}>
-                {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <ArrowUp className="w-5 h-5" />}
+              <Button
+                onClick={() => void handleSubmit()}
+                disabled={!canSubmit}
+                size="icon"
+                title={currentMode === 'image-to-image' ? '按图生图提交' : '按文生图提交'}
+              >
+                {loading || submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <ArrowUp className="w-5 h-5" />}
               </Button>
             </div>
-          </>
+          </fieldset>
         )}
       </div>
 

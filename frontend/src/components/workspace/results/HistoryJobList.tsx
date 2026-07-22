@@ -15,6 +15,8 @@ import {
 } from '@/lib/model-capabilities';
 import { CompletedJobCard } from '@/components/workspace/results/CompletedJobCard';
 import { PromptTextDialog } from '@/components/workspace/results/PromptTextDialog';
+import { formatAmoTokenImageQuote } from '@/lib/amotoken-image-quote';
+import { formatCostEstimate, getBillingStatusLabel } from '@/lib/image-cost-estimator';
 
 export type GenerationHistoryFilter = 'all' | 'text-to-image' | 'image-to-image';
 export type HistoryClearScope = GenerationHistoryFilter;
@@ -58,6 +60,10 @@ function getModeLabel(job: StoredJob): string {
   if (job.mode === 'image-to-image') return getReferenceImageCount(job) > 1 ? '多图融合' : '单图编辑';
   if (job.mode === 'prompt-gallery') return '提示词广场';
   return '文生图';
+}
+
+function getJobModelDisplayName(job: StoredJob): string {
+  return job.imageQuote?.displayName || getModelDisplayName(job.model);
 }
 
 function summarizeText(value: string | undefined, maxLength: number): string {
@@ -116,8 +122,14 @@ const WaitingJobCard = memo(function WaitingJobCard({
           </button>
           <p className="mt-0.5 text-xs text-muted-foreground">{statusText}</p>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            已用 <span className="font-mono text-foreground">{elapsedSeconds}</span> 秒 · {getModelDisplayName(job.model)}
+            已用 <span className="font-mono text-foreground">{elapsedSeconds}</span> 秒 · {getJobModelDisplayName(job)}
           </p>
+          {job.imageQuote && (
+            <p className="mt-0.5 truncate text-xs text-primary">{formatAmoTokenImageQuote(job.imageQuote)}</p>
+          )}
+          {!job.imageQuote && job.costEstimate && (
+            <p className="mt-0.5 truncate text-xs text-primary">{formatCostEstimate(job.costEstimate)}</p>
+          )}
         </div>
         {job.serverTaskId && (
           <Button
@@ -386,10 +398,25 @@ const FailedJobCard = memo(function FailedJobCard({
           </div>
           <div className="flex max-h-14 flex-wrap items-center gap-1.5 overflow-hidden text-xs">
             <span className="max-w-full break-words rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{getModeLabel(job)}</span>
-            <span className="max-w-full break-words rounded-full bg-muted px-2 py-0.5 text-muted-foreground" title={getModelDisplayName(job.model)}>{getModelDisplayName(job.model)}</span>
+            <span className="max-w-full break-words rounded-full bg-muted px-2 py-0.5 text-muted-foreground" title={getJobModelDisplayName(job)}>{getJobModelDisplayName(job)}</span>
             <span className="max-w-full break-words rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{outputSizeLabel}</span>
             <span className="max-w-full break-words rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{job.aspect_ratio}</span>
             <span className="max-w-full break-words rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{formatElapsedTime(job.elapsedMs)}</span>
+            {job.imageQuote && (
+              <span className="max-w-full break-words rounded-full bg-primary/10 px-2 py-0.5 text-primary">
+                {formatAmoTokenImageQuote(job.imageQuote)}
+              </span>
+            )}
+            {!job.imageQuote && job.costEstimate && (
+              <span className="max-w-full break-words rounded-full bg-primary/10 px-2 py-0.5 text-primary">
+                {formatCostEstimate(job.costEstimate)}
+              </span>
+            )}
+            {!job.imageQuote && job.billingStatus && (
+              <span className="max-w-full break-words rounded-full bg-warning/10 px-2 py-0.5 text-warning">
+                {getBillingStatusLabel(job.billingStatus)}
+              </span>
+            )}
           </div>
           <div className="grid max-h-20 grid-cols-2 gap-x-3 gap-y-1 overflow-y-auto rounded-md bg-muted/40 p-2 text-xs text-muted-foreground sm:grid-cols-3">
             <span>质量：{qualityLabel}</span>

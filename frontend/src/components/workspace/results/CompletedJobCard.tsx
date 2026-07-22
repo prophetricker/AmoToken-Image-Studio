@@ -16,6 +16,7 @@ import {
   GPT_IMAGE_QUALITY_OPTIONS,
   GPT_IMAGE_STYLE_OPTIONS,
 } from '@/lib/model-capabilities';
+import { formatAmoTokenImageQuote } from '@/lib/amotoken-image-quote';
 import { formatCostEstimate, getBillingStatusLabel } from '@/lib/image-cost-estimator';
 import { HistoryImagePreview } from '@/components/workspace/results/HistoryImagePreview';
 import { ConfirmDialog } from '@/components/workspace/dialogs/ConfirmDialog';
@@ -240,6 +241,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
   const isMultiple = sourceImages.length > 1;
   const supportsTemperature = !isGptImageLikeModel(job.model);
   const outputSizeLabel = job.custom_size || getOutputSizeLabel(job.output_size);
+  const modelDisplayName = job.imageQuote?.displayName || getModelDisplayName(job.model);
   const qualityLabel = getOptionLabel(GPT_IMAGE_QUALITY_OPTIONS, job.gptImageQuality);
   const styleLabel = getOptionLabel(GPT_IMAGE_STYLE_OPTIONS, job.gptImageStyle);
   const backgroundLabel = getOptionLabel(GPT_IMAGE_BACKGROUND_OPTIONS, job.gptImageBackground);
@@ -323,7 +325,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
       await addTextAsset({
         content: buildPromptAssetContent(job, {
           mode: getModeLabel(job),
-          model: getModelDisplayName(job.model),
+          model: modelDisplayName,
           outputSize: outputSizeLabel,
           quality: qualityLabel,
           style: styleLabel,
@@ -472,7 +474,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
             )}
 
             <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
-              {getModelDisplayName(job.model)}
+              {modelDisplayName}
               <span>·</span>
               {outputSizeLabel}
               {showAspectInSummary && <><span>·</span><span>{job.aspect_ratio}</span></>}
@@ -484,8 +486,21 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
               <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-700 dark:text-emerald-400">已完成</span>
               <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{formatCreatedTime(job.created_at)}</span>
               <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{formatElapsedTime(job.elapsedMs)}</span>
-              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-primary">{formatCostEstimate(job.costEstimate)}</span>
-              <span className="rounded-full bg-warning/10 px-2 py-0.5 text-warning">{getBillingStatusLabel(job.billingStatus)}</span>
+              {job.imageQuote && (
+                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-primary">
+                  {formatAmoTokenImageQuote(job.imageQuote)}
+                </span>
+              )}
+              {!job.imageQuote && job.costEstimate && (
+                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-primary">
+                  {formatCostEstimate(job.costEstimate)}
+                </span>
+              )}
+              {!job.imageQuote && job.billingStatus && (
+                <span className="rounded-full bg-warning/10 px-2 py-0.5 text-warning">
+                  {getBillingStatusLabel(job.billingStatus)}
+                </span>
+              )}
             </div>
             <div className="mt-2 grid max-h-20 grid-cols-2 gap-x-3 gap-y-1 overflow-y-auto rounded-md bg-muted/40 p-2 text-xs text-muted-foreground sm:grid-cols-3">
               {!showAspectInSummary && <span>比例：{job.aspect_ratio}</span>}

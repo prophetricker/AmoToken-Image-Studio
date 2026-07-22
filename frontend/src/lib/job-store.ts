@@ -3,6 +3,7 @@ import { makeStoredBlobRef, type ImageDownloadProgressItem } from '@/lib/image-d
 import { openImageDb, IMG_STORE } from '@/lib/image-db';
 import type { BillingStatus, CostEstimate } from '@/lib/image-cost-estimator';
 import type { FailureReason } from '@/lib/task-failure';
+import type { AmoTokenImageQuote } from '@/lib/amotoken-image-quote';
 
 export type Mode = 'text-to-image' | 'image-to-image' | 'prompt-gallery';
 export type OutputSize = 'auto' | '512' | '1K' | '2K' | '4K';
@@ -42,6 +43,7 @@ export interface StoredJob {
   elapsedMs?: number;
   costEstimate?: CostEstimate;
   billingStatus?: BillingStatus;
+  imageQuote?: AmoTokenImageQuote;
   error?: string;
   networkError?: boolean;
   failureReason?: FailureReason;

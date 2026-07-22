@@ -3,6 +3,7 @@ import { ackNovaTask, createNovaTask, resolveImageTaskProvider, type NovaTaskRes
 import { downloadAndStoreImages } from '@/lib/image-downloader';
 import type { StoredJob } from '@/lib/job-store';
 import { AMOTOKEN_IMAGE_MODEL_ID, saveAmoTokenToken } from '@/lib/nova-models';
+import { bindAmoTokenImageQuote, type AmoTokenImageQuote } from '@/lib/amotoken-image-quote';
 import {
   buildCompletedJobFromTask,
   finalizeCompletedServerTask,
@@ -57,6 +58,25 @@ function makeCompletedTask(images: string[]): NovaTaskResponse {
   };
 }
 
+function makeQuote(overrides: Partial<AmoTokenImageQuote> = {}): AmoTokenImageQuote {
+  return bindAmoTokenImageQuote({
+    catalogVersion: 'image-v11',
+    model: 'gpt-image-2',
+    displayName: 'GPT Image 2',
+    mode: 'generation',
+    resolutionTier: '1K',
+    size: '1024x1024',
+    quality: 'high',
+    count: 1,
+    referenceImageCount: 0,
+    unitPrice: 0.06,
+    totalPrice: 0.06,
+    currency: 'API_CREDIT',
+    available: true,
+    ...overrides,
+  }, 'test-api-key');
+}
+
 function createActions(initialJob: StoredJob): { actions: SubmitActions; getJob: () => StoredJob } {
   let currentJob = initialJob;
   const actions: SubmitActions = {
@@ -103,6 +123,7 @@ describe('submitTextToImage', () => {
     await submitTextToImage({
       prompts: ['cut out subject'],
       outputSize: '1K',
+      customSize: '1024x1024',
       aspectRatio: '1:1',
       temperature: 1,
       model: AMOTOKEN_IMAGE_MODEL_ID,
@@ -110,6 +131,7 @@ describe('submitTextToImage', () => {
       gptImageStyle: 'vivid',
       gptImageBackground: 'transparent',
       parallelCount: 1,
+      quote: makeQuote(),
     }, actions, vi.fn());
 
     expect(mockedCreateNovaTask).toHaveBeenCalledWith(expect.objectContaining({
@@ -119,16 +141,18 @@ describe('submitTextToImage', () => {
       gptImageQuality: 'high',
       gptImageStyle: 'vivid',
       gptImageBackground: 'transparent',
+      imageQuote: makeQuote(),
     }));
     expect(actions.addJob).toHaveBeenCalledWith(expect.objectContaining({
       gptImageQuality: 'high',
       gptImageStyle: 'vivid',
       gptImageBackground: 'transparent',
+      imageQuote: makeQuote(),
     }));
     expect(getJob().serverTaskId).toBe('task-advanced-1');
   });
 
-  it('records local start time and estimated cost on submitted jobs', async () => {
+  it('records local start time and the exact API-credit quote on submitted jobs', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-06T08:00:00.000Z'));
     const job = makeJob();
@@ -137,6 +161,7 @@ describe('submitTextToImage', () => {
     await submitTextToImage({
       prompts: ['complex family portrait'],
       outputSize: '2K',
+      customSize: '2048x2048',
       aspectRatio: '1:1',
       temperature: 1,
       model: AMOTOKEN_IMAGE_MODEL_ID,
@@ -144,28 +169,34 @@ describe('submitTextToImage', () => {
       gptImageStyle: 'vivid',
       gptImageBackground: 'opaque',
       parallelCount: 1,
+      quote: makeQuote({
+        resolutionTier: '2K',
+        size: '2048x2048',
+        totalPrice: 0.13,
+        unitPrice: 0.13,
+      }),
     }, actions, vi.fn());
 
     expect(actions.addJob).toHaveBeenCalledWith(expect.objectContaining({
       startedAt: '2026-07-06T08:00:00.000Z',
-      costEstimate: expect.objectContaining({
-        min: 0.08,
-        max: 0.13,
-        currency: 'CNY',
+      imageQuote: expect.objectContaining({
+        resolutionTier: '2K',
+        totalPrice: 0.13,
+        currency: 'API_CREDIT',
       }),
-      billingStatus: 'unverified',
     }));
+    expect(vi.mocked(actions.addJob).mock.calls[0][0].costEstimate).toBeUndefined();
     vi.useRealTimers();
   });
 });
 
 describe('submitImageToImage', () => {
-  it('limits AmoToken multi-image fusion to four input images', async () => {
+  it('uses the quoted catalog capability instead of a legacy four-image limit', async () => {
     const job = makeJob({ mode: 'image-to-image' });
     const { actions } = createActions(job);
     const onError = vi.fn();
 
-    await submitImageToImage({
+    const accepted = await submitImageToImage({
       prompt: 'merge these references',
       files: [
         { id: '1', name: '1.png', dataUrl: 'data:image/png;base64,one', mimeType: 'image/png' },
@@ -175,6 +206,7 @@ describe('submitImageToImage', () => {
         { id: '5', name: '5.png', dataUrl: 'data:image/png;base64,five', mimeType: 'image/png' },
       ],
       outputSize: '2K',
+      customSize: '2048x2048',
       aspectRatio: '16:9',
       temperature: 1,
       model: 'amotoken-gpt-image-2',
@@ -182,14 +214,26 @@ describe('submitImageToImage', () => {
       gptImageStyle: 'auto',
       gptImageBackground: 'opaque',
       parallelCount: 1,
+      quote: makeQuote({
+        mode: 'edit',
+        resolutionTier: '2K',
+        size: '2048x2048',
+        quality: 'medium',
+        referenceImageCount: 5,
+      }),
     }, actions, onError);
 
-    expect(mockedCreateNovaTask).not.toHaveBeenCalled();
-    expect(actions.addJob).not.toHaveBeenCalled();
-    expect(onError).toHaveBeenCalledWith('多图融合最多支持 4 张参考图');
+    expect(accepted).toBe(true);
+    expect(mockedCreateNovaTask).toHaveBeenCalledWith(expect.objectContaining({
+      images: expect.any(Array),
+      imageQuote: expect.objectContaining({ referenceImageCount: 5 }),
+    }));
+    expect(mockedCreateNovaTask.mock.calls[0][0].images).toHaveLength(5);
+    expect(actions.addJob).toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
   });
 
-  it('records fusion cost estimates when more than one reference image is submitted', async () => {
+  it('records the exact edit quote when more than one reference image is submitted', async () => {
     const job = makeJob({ mode: 'image-to-image' });
     const { actions } = createActions(job);
 
@@ -200,6 +244,7 @@ describe('submitImageToImage', () => {
         { id: '2', name: '2.png', dataUrl: 'data:image/png;base64,two', mimeType: 'image/png' },
       ],
       outputSize: '2K',
+      customSize: '2048x2048',
       aspectRatio: '16:9',
       temperature: 1,
       model: 'amotoken-gpt-image-2',
@@ -207,6 +252,15 @@ describe('submitImageToImage', () => {
       gptImageStyle: 'auto',
       gptImageBackground: 'opaque',
       parallelCount: 1,
+      quote: makeQuote({
+        mode: 'edit',
+        resolutionTier: '2K',
+        size: '2048x2048',
+        quality: 'medium',
+        referenceImageCount: 2,
+        unitPrice: 0.13,
+        totalPrice: 0.13,
+      }),
     }, actions, vi.fn());
 
     expect(actions.addJob).toHaveBeenCalledWith(expect.objectContaining({
@@ -215,12 +269,60 @@ describe('submitImageToImage', () => {
         expect.objectContaining({ id: '2' }),
       ]),
       referenceImageCount: 2,
-      costEstimate: expect.objectContaining({
-        min: 0.12,
-        max: 0.13,
-        currency: 'CNY',
+      imageQuote: expect.objectContaining({
+        mode: 'edit',
+        referenceImageCount: 2,
+        totalPrice: 0.13,
+        currency: 'API_CREDIT',
       }),
     }));
+  });
+
+  it('blocks task creation when the submitted quote does not match the requested SKU', async () => {
+    const job = makeJob();
+    const { actions } = createActions(job);
+    const onError = vi.fn();
+
+    await submitTextToImage({
+      prompts: ['a poster'],
+      outputSize: '1K',
+      customSize: '1024x1024',
+      aspectRatio: '1:1',
+      temperature: 1,
+      model: 'gpt-image-2',
+      gptImageQuality: 'high',
+      gptImageStyle: 'auto',
+      gptImageBackground: 'auto',
+      parallelCount: 1,
+      quote: makeQuote({ size: '2048x2048', resolutionTier: '2K' }),
+    }, actions, onError);
+
+    expect(onError).toHaveBeenCalledWith('当前生图规格与报价不一致，请重新选择后再试');
+    expect(actions.addJob).not.toHaveBeenCalled();
+    expect(mockedCreateNovaTask).not.toHaveBeenCalled();
+  });
+
+  it('blocks a quote issued for another token', async () => {
+    const { actions } = createActions(makeJob());
+    const onError = vi.fn();
+
+    await submitTextToImage({
+      prompts: ['a poster'],
+      outputSize: '1K',
+      customSize: '1024x1024',
+      aspectRatio: '1:1',
+      temperature: 1,
+      model: 'gpt-image-2',
+      gptImageQuality: 'high',
+      gptImageStyle: 'auto',
+      gptImageBackground: 'auto',
+      parallelCount: 1,
+      quote: bindAmoTokenImageQuote(makeQuote(), 'another-token'),
+    }, actions, onError);
+
+    expect(onError).toHaveBeenCalledWith('当前生图规格与报价不一致，请重新选择后再试');
+    expect(actions.addJob).not.toHaveBeenCalled();
+    expect(mockedCreateNovaTask).not.toHaveBeenCalled();
   });
 });
 

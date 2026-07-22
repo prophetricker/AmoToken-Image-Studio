@@ -1,12 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { CANDIDATE_MODES_STORAGE_KEY } from '@/lib/candidate-capabilities';
 import {
-  getAspectRatioOptions,
-  getCustomSizeMaxSide,
-  normalizeCustomImageSize,
+  getCompatibleRetryData,
 } from '@/lib/model-capabilities';
-import { GIF_GRID_CUSTOM_SIZE } from '@/lib/gif-job-store';
-import { AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID, saveAmoTokenToken } from '@/lib/nova-models';
+import { AMOTOKEN_IMAGE_MODEL_1K_BACKUP_ID, AMOTOKEN_IMAGE_MODEL_ID, saveAmoTokenToken } from '@/lib/nova-models';
+import type { StoredJob } from '@/lib/job-store';
 
 const store = new Map<string, string>();
 
@@ -22,34 +19,21 @@ beforeEach(() => {
   });
 });
 
-function enableAmoToken4KGrayModel() {
-  saveAmoTokenToken('sk-live-token');
-  localStorage.setItem(CANDIDATE_MODES_STORAGE_KEY, 'enabled');
-}
+describe('legacy AmoToken job compatibility', () => {
+  it('migrates an old backup alias to the stable registry model for retry', () => {
+    saveAmoTokenToken('sk-live-token');
+    const job: StoredJob = {
+      id: 'legacy-job',
+      status: 'failed',
+      mode: 'text-to-image',
+      prompt: 'legacy prompt',
+      output_size: '1K',
+      temperature: 1,
+      aspect_ratio: '1:1',
+      model: AMOTOKEN_IMAGE_MODEL_1K_BACKUP_ID,
+      created_at: '2026-07-22T00:00:00.000Z',
+    };
 
-describe('AmoToken 4K gray-test layout limits', () => {
-  it('only exposes 4K GPT Image 2 aspect ratios that fit the service size envelope', () => {
-    enableAmoToken4KGrayModel();
-
-    expect(getAspectRatioOptions(AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID, '4K')).toEqual([
-      { value: '16:9', label: '宽屏', resolution: '3840x2160' },
-      { value: '9:16', label: '竖屏', resolution: '2160x3840' },
-      { value: '21:9', label: '超宽屏', resolution: '3840x1648' },
-    ]);
-  });
-
-  it('keeps 2K layouts broad while filtering invalid 4K square output', () => {
-    enableAmoToken4KGrayModel();
-
-    expect(getAspectRatioOptions(AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID, '2K').map(option => option.value)).toContain('1:1');
-    expect(getAspectRatioOptions(AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID, '4K').map(option => option.value)).not.toContain('1:1');
-  });
-
-  it('allows the GIF grid custom size but rejects oversized square custom sizes', () => {
-    enableAmoToken4KGrayModel();
-    const maxSide = getCustomSizeMaxSide(AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID);
-
-    expect(normalizeCustomImageSize(GIF_GRID_CUSTOM_SIZE, maxSide)).toBe(GIF_GRID_CUSTOM_SIZE);
-    expect(normalizeCustomImageSize('4096x4096', maxSide)).toBeUndefined();
+    expect(getCompatibleRetryData(job).model).toBe(AMOTOKEN_IMAGE_MODEL_ID);
   });
 });
