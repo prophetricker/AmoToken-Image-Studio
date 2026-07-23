@@ -6,11 +6,11 @@ import { ServiceWorkerManager } from "@/components/ServiceWorkerManager";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Nova Image - AI 图像生成器",
-  description: "Nova Image AI 图像生成工作台",
+  title: "AmoToken Image Studio",
+  description: "AmoToken AI 生图工作台",
   icons: {
     icon: [
-      { url: '/favicon.png', type: 'image/png' },
+      { url: '/amotoken.png', type: 'image/png' },
       { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
       { url: '/icon-512.png', sizes: '512x512', type: 'image/png' },
     ],
@@ -19,7 +19,7 @@ export const metadata: Metadata = {
   },
   manifest: '/manifest.json',
   other: {
-    'theme-color': '#1a1a2e',
+    'theme-color': '#0284c7',
   },
 };
 

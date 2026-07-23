@@ -28,6 +28,14 @@ describe('SettingsModal AmoToken setup', () => {
     expect(screen.queryByText('协议')).not.toBeInTheDocument();
   });
 
+  it('shows the AmoToken product name in the about panel', () => {
+    render(<SettingsModal isOpen onClose={vi.fn()} onApiKeyChange={vi.fn()} />);
+
+    fireEvent.click(screen.getAllByRole('tab')[2]);
+
+    expect(screen.getByText(/AmoToken Image Studio/)).toBeInTheDocument();
+  });
+
   it('saves one token into the AmoToken preset registry', () => {
     const onApiKeyChange = vi.fn();
     render(<SettingsModal isOpen onClose={vi.fn()} onApiKeyChange={onApiKeyChange} />);

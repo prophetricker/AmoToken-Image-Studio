@@ -282,7 +282,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
 
           <TabsContent value="about" className="mt-0 min-h-0 space-y-4 overflow-y-auto p-4 text-sm sm:p-6">
             <h3 className="text-lg font-medium">
-              Nova Image <span className="text-xs font-normal text-muted-foreground">v{process.env.NEXT_PUBLIC_APP_VERSION}</span>
+              AmoToken Image Studio <span className="text-xs font-normal text-muted-foreground">v{process.env.NEXT_PUBLIC_APP_VERSION}</span>
             </h3>
             <p className="text-muted-foreground">
               AmoToken v0.5 基于 Nova Image Studio 定制，只向普通用户开放 GPT Image 2 文生图、单图编辑和多图融合。

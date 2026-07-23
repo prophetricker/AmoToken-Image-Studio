@@ -9,6 +9,10 @@
   isolation: isolate;
 }
 
+.amotoken-brand-mark {
+  filter: drop-shadow(0 0 1px color-mix(in srgb, var(--foreground) 42%, transparent));
+}
+
 .amotoken-studio-wave {
   position: absolute;
   right: -8%;
