@@ -10,6 +10,7 @@ import {
   EyeOff,
   ImageIcon,
   Info,
+  KeyRound,
   Settings,
   Upload,
   XCircle,
@@ -40,6 +41,7 @@ import {
 } from '@/lib/nova-models';
 import { BA_RANDOM_URL, BING_WALLPAPER_URL } from '@/lib/constants';
 import { PROMPT_DATA_SOURCES, getPromptSourceLabel } from '@/lib/prompt-gallery-data';
+import { requestAmoTokenImageToken } from '@/lib/amotoken-key-picker';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -58,6 +60,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
   const [showAmoTokenApiKey, setShowAmoTokenApiKey] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [isKeyPickerOpen, setIsKeyPickerOpen] = useState(false);
   const [backupProgress, setBackupProgress] = useState<BackupProgressType>({ percent: 0, message: '' });
   const [isBackupActive, setIsBackupActive] = useState(false);
   const [backupError, setBackupError] = useState<string | null>(null);
@@ -93,12 +96,12 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
     onClose();
   };
 
-  const handleSaveAmoTokenToken = () => {
-    const token = amotokenApiKey.trim();
+  const saveToken = (rawToken: string) => {
+    const token = rawToken.trim();
     if (!token) {
       setError('请先粘贴 AmoToken 令牌');
       setSuccess(null);
-      return;
+      return false;
     }
 
     saveAmoTokenToken(token);
@@ -108,6 +111,25 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
     setAmotokenApiKey(token);
     setError(null);
     setSuccess('令牌已保存');
+    return true;
+  };
+
+  const handleSaveAmoTokenToken = () => {
+    saveToken(amotokenApiKey);
+  };
+
+  const handleSelectAmoTokenToken = async () => {
+    setIsKeyPickerOpen(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const token = await requestAmoTokenImageToken();
+      saveToken(token);
+    } catch {
+      setError('无法打开 AmoToken 密钥选择，请重试');
+    } finally {
+      setIsKeyPickerOpen(false);
+    }
   };
 
   const handleExport = async () => {
@@ -192,6 +214,17 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
             {success && <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-400">{success}</div>}
 
             <div className="space-y-3 rounded-lg border p-4">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full gap-2"
+                onClick={() => void handleSelectAmoTokenToken()}
+                disabled={isKeyPickerOpen}
+              >
+                <KeyRound className="h-4 w-4" />
+                {isKeyPickerOpen ? '正在打开 AmoToken...' : '从 AmoToken 选择生图密钥'}
+              </Button>
+
               <div className="space-y-2">
                 <label htmlFor="amotoken-api-key" className="text-sm font-medium">AmoToken 令牌</label>
                 <div className="relative">

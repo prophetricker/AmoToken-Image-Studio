@@ -1,8 +1,13 @@
 import '@testing-library/jest-dom/vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SettingsModal } from '@/components/SettingsModal';
-import { AMOTOKEN_IMAGE_MODEL_ID, loadRegistry } from '@/lib/nova-models';
+import { requestAmoTokenImageToken } from '@/lib/amotoken-key-picker';
+import { AMOTOKEN_IMAGE_MODEL_ID, loadRegistry, saveAmoTokenToken } from '@/lib/nova-models';
+
+vi.mock('@/lib/amotoken-key-picker', () => ({
+  requestAmoTokenImageToken: vi.fn(),
+}));
 
 const store = new Map<string, string>();
 
@@ -15,6 +20,7 @@ beforeEach(() => {
     clear: vi.fn(() => { store.clear(); }),
   });
   vi.spyOn(window, 'dispatchEvent').mockImplementation(() => true);
+  vi.mocked(requestAmoTokenImageToken).mockReset();
 });
 
 describe('SettingsModal AmoToken setup', () => {
@@ -47,5 +53,30 @@ describe('SettingsModal AmoToken setup', () => {
     expect(registry.imageModels[0].id).toBe(AMOTOKEN_IMAGE_MODEL_ID);
     expect(registry.imageModels[0].apiKey).toBe('sk-test-token');
     expect(onApiKeyChange).toHaveBeenCalledWith('sk-test-token');
+  });
+
+  it('selects and saves an image token from AmoToken', async () => {
+    const onApiKeyChange = vi.fn();
+    vi.mocked(requestAmoTokenImageToken).mockResolvedValue('sk-picker-token');
+    render(<SettingsModal isOpen onClose={vi.fn()} onApiKeyChange={onApiKeyChange} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '从 AmoToken 选择生图密钥' }));
+
+    await waitFor(() => {
+      expect(loadRegistry().imageModels[0].apiKey).toBe('sk-picker-token');
+    });
+    expect(onApiKeyChange).toHaveBeenCalledWith('sk-picker-token');
+    expect(screen.getByText('令牌已保存')).toBeInTheDocument();
+  });
+
+  it('keeps the existing token when the picker fails', async () => {
+    saveAmoTokenToken('sk-existing-token');
+    vi.mocked(requestAmoTokenImageToken).mockRejectedValue(new Error('popup blocked'));
+    render(<SettingsModal isOpen onClose={vi.fn()} onApiKeyChange={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '从 AmoToken 选择生图密钥' }));
+
+    expect(await screen.findByText('无法打开 AmoToken 密钥选择，请重试')).toBeInTheDocument();
+    expect(loadRegistry().imageModels[0].apiKey).toBe('sk-existing-token');
   });
 });
