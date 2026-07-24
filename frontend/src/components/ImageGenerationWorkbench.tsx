@@ -41,7 +41,7 @@ import type { AspectRatio, OutputSize, RefImageData } from '@/lib/job-store';
 import type { ImageFormSettings } from '@/lib/form-settings';
 import type { ImageToImageSubmitInput, TextToImageSubmitInput } from '@/lib/workspace-task-service';
 import { getSensitivePromptWarning } from '@/lib/task-failure';
-import { getAmoTokenToken } from '@/lib/nova-models';
+import { AMOTOKEN_IMAGE_MODEL_ID, getAmoTokenToken } from '@/lib/nova-models';
 import {
   fetchAmoTokenImageCatalog,
   getAmoTokenImageModeCapabilities,
@@ -56,6 +56,10 @@ import {
   formatAmoTokenImageQuote,
   type AmoTokenImageQuote,
 } from '@/lib/amotoken-image-quote';
+import {
+  LEGACY_AMOTOKEN_IMAGE_CATALOG,
+  isLegacyAmoTokenImageSubmission,
+} from '@/lib/amotoken-image-fallback';
 import { cn } from '@/lib/utils';
 
 const WORKBENCH_SETTINGS_KEY = 'nova-image-generation-settings';
@@ -66,6 +70,7 @@ const MAX_ASSET_IMPORTS = 5;
 type WorkbenchMode = 'text-to-image' | 'image-to-image';
 type WorkbenchSettings = ImageFormSettings;
 type CatalogStatus = 'idle' | 'loading' | 'ready' | 'error';
+type CatalogSource = 'exact' | 'legacy';
 
 const ASPECT_RATIO_VALUES: AspectRatio[] = ['1:1', '1:4', '1:8', '2:3', '3:2', '3:4', '4:1', '4:3', '4:5', '5:4', '8:1', '9:16', '16:9', '21:9'];
 
@@ -184,6 +189,7 @@ export function ImageGenerationWorkbench({
   const [parallelCount, setParallelCount] = useState<ParallelCount>(1);
   const [settingsReady, setSettingsReady] = useState(false);
   const [catalog, setCatalog] = useState<AmoTokenImageCatalog | null>(null);
+  const [catalogSource, setCatalogSource] = useState<CatalogSource>('exact');
   const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>('idle');
   const [catalogMessage, setCatalogMessage] = useState('');
   const [quote, setQuote] = useState<AmoTokenImageQuote | null>(null);
@@ -253,6 +259,7 @@ export function ImageGenerationWorkbench({
   const disabledMessage = '请先粘贴 AmoToken 令牌，保存后选择模型，就可以开始第一张图。';
   const sensitivePromptWarning = useMemo(() => getSensitivePromptWarning(prompt), [prompt]);
   const activeQuote = quote
+    && catalogSource === 'exact'
     && quote.catalogVersion === catalog?.version
     && quote.model === selectedModel
     && quote.mode === operationMode
@@ -263,6 +270,17 @@ export function ImageGenerationWorkbench({
     && quote.referenceImageCount === pendingFiles.length
     ? quote
     : null;
+  const legacySubmissionAllowed = catalogSource === 'legacy'
+    && catalogStatus === 'ready'
+    && isLegacyAmoTokenImageSubmission({
+      providerModel: selectedModel,
+      mode: operationMode,
+      outputSize: selectedOutputSize,
+      size: selectedActualSize,
+      quality: selectedQuality,
+      count: selectedParallelCount,
+      referenceImageCount: pendingFiles.length,
+    });
 
   const handleParamsChange = useCallback((patch: Partial<GenerationParamsValue>) => {
     if (patch.model !== undefined) setModel(patch.model);
@@ -282,25 +300,35 @@ export function ImageGenerationWorkbench({
     queueMicrotask(() => {
       if (cancelled) return;
       setCatalog(null);
+      setCatalogSource('exact');
       setCatalogStatus('loading');
       setCatalogMessage('正在读取生图目录…');
+      setQuote(null);
+      setQuoteStatus('idle');
+      setQuoteMessage('');
     });
     void fetchAmoTokenImageCatalog(token).then(nextCatalog => {
       if (cancelled) return;
       setCatalog(nextCatalog);
+      setCatalogSource('exact');
       setCatalogStatus('ready');
       setCatalogMessage('');
-    }).catch(error => {
+    }).catch(() => {
       if (cancelled) return;
-      setCatalog(null);
-      setCatalogStatus('error');
-      setCatalogMessage(error instanceof Error ? error.message : '暂时无法读取生图模型，请稍后重试');
+      quoteRequestIdRef.current += 1;
+      setCatalog(LEGACY_AMOTOKEN_IMAGE_CATALOG);
+      setCatalogSource('legacy');
+      setCatalogStatus('ready');
+      setCatalogMessage('');
+      setQuote(null);
+      setQuoteStatus('idle');
+      setQuoteMessage('精确报价暂不可用');
     });
     return () => { cancelled = true; };
   }, [amoToken, disabled]);
 
   useEffect(() => {
-    if (catalogStatus !== 'ready' || !catalogCapabilities || !selectedActualSize) return;
+    if (catalogSource !== 'exact' || catalogStatus !== 'ready' || !catalogCapabilities || !selectedActualSize) return;
     const token = amoToken;
     const requestId = ++quoteRequestIdRef.current;
     let cancelled = false;
@@ -328,7 +356,7 @@ export function ImageGenerationWorkbench({
       setQuoteMessage(error instanceof Error ? error.message : '暂时无法获取生图报价，请稍后重试');
     });
     return () => { cancelled = true; };
-  }, [amoToken, catalogCapabilities, catalogStatus, operationMode, pendingFiles.length, selectedActualSize, selectedModel, selectedParallelCount, selectedQuality]);
+  }, [amoToken, catalogCapabilities, catalogSource, catalogStatus, operationMode, pendingFiles.length, selectedActualSize, selectedModel, selectedParallelCount, selectedQuality]);
 
   useEffect(() => {
     if (!textareaRef.current) return;
@@ -728,30 +756,34 @@ export function ImageGenerationWorkbench({
   }, [currentMode, prompt]);
 
   const handleSubmit = async () => {
-    if (!prompt.trim() || disabled || loading || submitting || !activeQuote) return;
+    const hasBillingContext = catalogSource === 'exact' ? Boolean(activeQuote) : legacySubmissionAllowed;
+    if (!prompt.trim() || disabled || loading || submitting || !hasBillingContext) return;
 
     setSubmitting(true);
-    const requestId = ++quoteRequestIdRef.current;
-    const submissionToken = getAmoTokenToken();
-    setQuote(null);
-    setQuoteStatus('loading');
-    setQuoteMessage('正在确认本次生图报价…');
 
     try {
-      const submissionQuote = await fetchAmoTokenImageQuote(submissionToken, {
-        model: selectedModel,
-        mode: operationMode,
-        size: selectedActualSize,
-        quality: selectedQuality,
-        count: selectedParallelCount,
-        referenceImageCount: pendingFiles.length,
-      });
-      if (requestId !== quoteRequestIdRef.current) return;
-      setQuote(submissionQuote);
-      setQuoteStatus('ready');
-      setQuoteMessage('');
+      let submissionQuote: AmoTokenImageQuote | undefined;
+      if (catalogSource === 'exact') {
+        const requestId = ++quoteRequestIdRef.current;
+        const submissionToken = getAmoTokenToken();
+        setQuote(null);
+        setQuoteStatus('loading');
+        setQuoteMessage('正在确认本次生图报价…');
+        submissionQuote = await fetchAmoTokenImageQuote(submissionToken, {
+          model: selectedModel,
+          mode: operationMode,
+          size: selectedActualSize,
+          quality: selectedQuality,
+          count: selectedParallelCount,
+          referenceImageCount: pendingFiles.length,
+        });
+        if (requestId !== quoteRequestIdRef.current) return;
+        setQuote(submissionQuote);
+        setQuoteStatus('ready');
+        setQuoteMessage('');
+      }
 
-      const modelWithBilling = selectedModel;
+      const modelWithBilling = catalogSource === 'legacy' ? AMOTOKEN_IMAGE_MODEL_ID : selectedModel;
       let accepted: boolean | void;
       if (pendingFiles.length > 0) {
         accepted = await onSubmitImage({
@@ -792,8 +824,12 @@ export function ImageGenerationWorkbench({
       onDraftConsumed?.();
     } catch (error) {
       setQuote(null);
-      setQuoteStatus('error');
-      setQuoteMessage(error instanceof Error ? error.message : '暂时无法获取生图报价');
+      if (catalogSource === 'exact') {
+        setQuoteStatus('error');
+        setQuoteMessage(error instanceof Error ? error.message : '暂时无法获取生图报价');
+      } else {
+        setUploadError(error instanceof Error ? error.message : '生图提交失败');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -813,7 +849,12 @@ export function ImageGenerationWorkbench({
     }
   };
 
-  const canSubmit = prompt.trim().length > 0 && !disabled && !loading && !submitting && catalogStatus === 'ready' && Boolean(activeQuote);
+  const canSubmit = prompt.trim().length > 0
+    && !disabled
+    && !loading
+    && !submitting
+    && catalogStatus === 'ready'
+    && (catalogSource === 'exact' ? Boolean(activeQuote) : legacySubmissionAllowed);
   const canClear = prompt.trim().length > 0 || pendingFiles.length > 0;
 
   return (
@@ -930,10 +971,18 @@ export function ImageGenerationWorkbench({
             <div className="flex flex-wrap items-center gap-2 px-3 pb-2 text-xs text-muted-foreground sm:px-4">
               <span className={cn(
                 'rounded-full px-2 py-0.5',
-                 activeQuote ? 'bg-primary/10 text-primary' : quoteStatus === 'error' || catalogStatus === 'error' ? 'bg-destructive/10 text-destructive' : 'bg-muted text-muted-foreground',
+                 activeQuote
+                   ? 'bg-primary/10 text-primary'
+                   : catalogSource === 'legacy'
+                     ? 'bg-warning/10 text-warning'
+                     : quoteStatus === 'error' || catalogStatus === 'error'
+                       ? 'bg-destructive/10 text-destructive'
+                       : 'bg-muted text-muted-foreground',
               )}>
-                {catalogStatus === 'loading' || catalogStatus === 'error'
+                {catalogStatus === 'loading'
                   ? catalogMessage
+                  : catalogSource === 'legacy'
+                    ? '精确报价暂不可用'
                    : activeQuote
                      ? formatAmoTokenImageQuote(activeQuote)
                     : quoteMessage || catalogMessage || '正在读取生图目录…'}

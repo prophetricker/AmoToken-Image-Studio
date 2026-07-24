@@ -102,6 +102,23 @@ function mockCatalogAndQuoteFetch(options: {
   return fetchMock;
 }
 
+function mockCatalogFailure(status: 404 | 503) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input) === '/api/nova/image-products/catalog') {
+      return new Response('{}', { status });
+    }
+    if (String(input) === '/api/nova/prompts') {
+      return {
+        ok: true,
+        json: async () => quickPrompts,
+      } as Response;
+    }
+    return new Response('{}', { status: 404 });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+
 describe('ImageGenerationWorkbench AmoToken setup', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -180,7 +197,7 @@ describe('ImageGenerationWorkbench AmoToken setup', () => {
     expect(await screen.findByRole('button', { name: /模型：GPT Image Lite/ })).toBeInTheDocument();
   });
 
-  it('blocks submission with concise states while the catalog is loading, failed, or empty', async () => {
+  it('blocks submission while the catalog is loading', async () => {
     saveAmoTokenToken('sk-test-token');
     let resolveCatalog!: (response: Response) => void;
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
@@ -195,19 +212,75 @@ describe('ImageGenerationWorkbench AmoToken setup', () => {
     expect(screen.getByRole('button', { name: '按文生图提交' })).toBeDisabled();
     unmount();
     resolveCatalog(new Response(JSON.stringify(imageCatalog), { status: 200 }));
+  });
 
+  it('uses the strict 1K fallback for text generation when catalog returns 503', async () => {
+    saveAmoTokenToken('sk-test-token');
     clearAmoTokenImageCatalogCache();
-    mockCatalogAndQuoteFetch({ catalog: { object: 'list', catalog_version: 'empty-v1', data: [] } });
-    const emptyView = render(<ImageGenerationWorkbench onSubmitText={vi.fn()} onSubmitImage={vi.fn()} />);
-    expect(await screen.findByText('当前没有可用的生图模型')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '按文生图提交' })).toBeDisabled();
-    emptyView.unmount();
+    const fetchMock = mockCatalogFailure(503);
+    const onSubmitText = vi.fn().mockResolvedValue(true);
+    render(<ImageGenerationWorkbench onSubmitText={onSubmitText} onSubmitImage={vi.fn()} />);
 
+    expect(await screen.findByText('精确报价暂不可用')).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText('描述你想要生成的图像...'), {
+      target: { value: '生成一张港口日出' },
+    });
+    const submitButton = screen.getByRole('button', { name: '按文生图提交' });
+    await waitFor(() => expect(submitButton).toBeEnabled());
+
+    fireEvent.click(submitButton);
+
+    await waitFor(() => expect(onSubmitText).toHaveBeenCalledWith(expect.objectContaining({
+      model: AMOTOKEN_IMAGE_MODEL_ID,
+      outputSize: '1K',
+      customSize: '1024x1024',
+      gptImageQuality: 'auto',
+      parallelCount: 1,
+      quote: undefined,
+    })));
+    expect(fetchMock.mock.calls.some(call => String(call[0]) === '/api/nova/image-products/quote')).toBe(false);
+  });
+
+  it('uses the strict 1K fallback for one-reference editing when catalog returns 404', async () => {
+    saveAmoTokenToken('sk-test-token');
     clearAmoTokenImageCatalogCache();
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
-    render(<ImageGenerationWorkbench onSubmitText={vi.fn()} onSubmitImage={vi.fn()} />);
-    expect(await screen.findByText('暂时无法读取生图模型，请稍后重试')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '按文生图提交' })).toBeDisabled();
+    const fetchMock = mockCatalogFailure(404);
+    const onSubmitImage = vi.fn().mockResolvedValue(true);
+    render(
+      <ImageGenerationWorkbench
+        onSubmitText={vi.fn()}
+        onSubmitImage={onSubmitImage}
+        initialData={{
+          model: AMOTOKEN_IMAGE_MODEL_ID,
+          prompt: '给小船加一面红色船帆',
+          outputSize: '1K',
+          customSize: '1024x1024',
+          aspectRatio: '1:1',
+          gptImageQuality: 'auto',
+          parallelCount: 1,
+          refImages: [
+            { id: 'ref-1', name: 'boat.png', dataUrl: 'data:image/png;base64,AAAA', mimeType: 'image/png' },
+          ],
+        }}
+      />,
+    );
+
+    expect(await screen.findByText('精确报价暂不可用')).toBeInTheDocument();
+    const submitButton = screen.getByRole('button', { name: '按图生图提交' });
+    await waitFor(() => expect(submitButton).toBeEnabled());
+
+    fireEvent.click(submitButton);
+
+    await waitFor(() => expect(onSubmitImage).toHaveBeenCalledWith(expect.objectContaining({
+      model: AMOTOKEN_IMAGE_MODEL_ID,
+      outputSize: '1K',
+      customSize: '1024x1024',
+      gptImageQuality: 'auto',
+      parallelCount: 1,
+      quote: undefined,
+      files: [expect.objectContaining({ id: 'ref-1' })],
+    })));
+    expect(fetchMock.mock.calls.some(call => String(call[0]) === '/api/nova/image-products/quote')).toBe(false);
   });
 
   it('uses generation catalog capabilities and shows an exact API-credit quote', async () => {
