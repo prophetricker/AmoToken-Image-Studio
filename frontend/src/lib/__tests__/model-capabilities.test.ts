@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  AMOTOKEN_GPT_IMAGE_BACKGROUND_OPTIONS,
+  AMOTOKEN_GPT_IMAGE_QUALITY_OPTIONS,
+  AMOTOKEN_GPT_IMAGE_STYLE_OPTIONS,
   getCompatibleRetryData,
+  normalizeGptImageBackground,
+  normalizeGptImageQuality,
+  normalizeGptImageStyle,
 } from '@/lib/model-capabilities';
 import { AMOTOKEN_IMAGE_MODEL_1K_BACKUP_ID, AMOTOKEN_IMAGE_MODEL_ID, saveAmoTokenToken } from '@/lib/nova-models';
 import type { StoredJob } from '@/lib/job-store';
@@ -35,5 +41,16 @@ describe('legacy AmoToken job compatibility', () => {
     };
 
     expect(getCompatibleRetryData(job).model).toBe(AMOTOKEN_IMAGE_MODEL_ID);
+  });
+});
+
+describe('AmoToken GPT Image parameters', () => {
+  it('keeps the current controls on automatic parameters', () => {
+    expect(AMOTOKEN_GPT_IMAGE_QUALITY_OPTIONS.map(option => option.value)).toEqual(['auto']);
+    expect(AMOTOKEN_GPT_IMAGE_STYLE_OPTIONS.map(option => option.value)).toEqual(['auto']);
+    expect(AMOTOKEN_GPT_IMAGE_BACKGROUND_OPTIONS.map(option => option.value)).toEqual(['auto']);
+    expect(normalizeGptImageQuality('high')).toBe('auto');
+    expect(normalizeGptImageStyle('vivid')).toBe('auto');
+    expect(normalizeGptImageBackground('transparent')).toBe('auto');
   });
 });

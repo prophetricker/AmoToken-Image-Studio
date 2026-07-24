@@ -60,6 +60,10 @@ export const GPT_IMAGE_BACKGROUND_OPTIONS: { value: GptImageBackground; label: s
   { value: 'opaque', label: '不透明' },
 ];
 
+export const AMOTOKEN_GPT_IMAGE_QUALITY_OPTIONS = GPT_IMAGE_QUALITY_OPTIONS.filter(option => option.value === 'auto');
+export const AMOTOKEN_GPT_IMAGE_STYLE_OPTIONS = GPT_IMAGE_STYLE_OPTIONS.filter(option => option.value === 'auto');
+export const AMOTOKEN_GPT_IMAGE_BACKGROUND_OPTIONS = GPT_IMAGE_BACKGROUND_OPTIONS.filter(option => option.value === 'auto');
+
 const BANANA_ASPECT_RATIOS: { value: AspectRatio; label: string; resolution: string }[] = [
   { value: '1:1', label: '正方形', resolution: '1024x1024' },
   { value: '2:3', label: '竖向', resolution: '832x1248' },
@@ -244,19 +248,19 @@ export function supportsGptImageAdvancedParams(model: string): boolean {
 }
 
 export function normalizeGptImageQuality(value?: string): GptImageQuality {
-  return GPT_IMAGE_QUALITY_OPTIONS.some(option => option.value === value)
+  return AMOTOKEN_GPT_IMAGE_QUALITY_OPTIONS.some(option => option.value === value)
     ? (value as GptImageQuality)
     : DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.quality;
 }
 
 export function normalizeGptImageStyle(value?: string): GptImageStyle {
-  return GPT_IMAGE_STYLE_OPTIONS.some(option => option.value === value)
+  return AMOTOKEN_GPT_IMAGE_STYLE_OPTIONS.some(option => option.value === value)
     ? (value as GptImageStyle)
     : DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.style;
 }
 
 export function normalizeGptImageBackground(value?: string): GptImageBackground {
-  return GPT_IMAGE_BACKGROUND_OPTIONS.some(option => option.value === value)
+  return AMOTOKEN_GPT_IMAGE_BACKGROUND_OPTIONS.some(option => option.value === value)
     ? (value as GptImageBackground)
     : DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.background;
 }

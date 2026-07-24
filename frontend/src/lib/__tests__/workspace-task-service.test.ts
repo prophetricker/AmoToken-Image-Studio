@@ -128,7 +128,7 @@ beforeEach(() => {
 });
 
 describe('submitTextToImage', () => {
-  it('passes GPT Image advanced params into createNovaTask payload', async () => {
+  it('normalizes GPT Image advanced params before creating the task', async () => {
     const job = makeJob();
     const { actions, getJob } = createActions(job);
 
@@ -150,15 +150,15 @@ describe('submitTextToImage', () => {
       apiKey: 'test-api-key',
       mode: 'text-to-image',
       model: 'gpt-image-2',
-      gptImageQuality: 'high',
-      gptImageStyle: 'vivid',
-      gptImageBackground: 'transparent',
+      gptImageQuality: 'auto',
+      gptImageStyle: 'auto',
+      gptImageBackground: 'auto',
       imageQuote: makeQuote(),
     }));
     expect(actions.addJob).toHaveBeenCalledWith(expect.objectContaining({
-      gptImageQuality: 'high',
-      gptImageStyle: 'vivid',
-      gptImageBackground: 'transparent',
+      gptImageQuality: 'auto',
+      gptImageStyle: 'auto',
+      gptImageBackground: 'auto',
       imageQuote: makeQuote(),
     }));
     expect(getJob().serverTaskId).toBe('task-advanced-1');

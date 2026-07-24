@@ -795,14 +795,14 @@ function validateEnumValue(value, validValues, fieldName) {
 }
 
 function normalizeGptImageAdvancedParams(params = {}) {
-  const quality = validateEnumValue(params.gptImageQuality, GPT_IMAGE_QUALITIES, 'quality');
-  const style = validateEnumValue(params.gptImageStyle, GPT_IMAGE_STYLES, 'style');
-  const background = validateEnumValue(params.gptImageBackground, GPT_IMAGE_BACKGROUNDS, 'background');
+  validateEnumValue(params.gptImageQuality, GPT_IMAGE_QUALITIES, 'quality');
+  validateEnumValue(params.gptImageStyle, GPT_IMAGE_STYLES, 'style');
+  validateEnumValue(params.gptImageBackground, GPT_IMAGE_BACKGROUNDS, 'background');
 
   return {
-    quality: quality || DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.quality,
-    style: style || DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.style,
-    background: background || DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.background,
+    quality: DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.quality,
+    style: DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.style,
+    background: DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.background,
   };
 }
 
@@ -818,6 +818,7 @@ function validateCreatePayload(body) {
   if (!Number.isInteger(body.parallelCount) || body.parallelCount < 1 || body.parallelCount > 4) throw new Error('并发数量无效');
 
   if (!Array.isArray(body.images)) body.images = [];
+  Object.assign(body, normalizeGptImageAdvancedParams(body));
   const effectiveBaseUrl = resolveOpenAiCompatibleBaseUrl(body.protocol, body.baseUrl);
   body.baseUrl = effectiveBaseUrl;
   if (!body.baseUrl) throw new Error('缺少 API 基础地址');
@@ -999,9 +1000,6 @@ function createGptImageRequestInit(apiKey, request, resolvedSize, options = {}) 
       formData.append('quality', advancedParams.quality);
       formData.append('background', advancedParams.background);
       formData.append('output_format', 'png');
-      if (advancedParams.style === 'vivid' || advancedParams.style === 'natural') {
-        formData.append('style', advancedParams.style);
-      }
     }
     if (resolvedSize) {
       formData.append('size', resolvedSize);
@@ -1033,7 +1031,6 @@ function createGptImageRequestInit(apiKey, request, resolvedSize, options = {}) 
       quality: advancedParams.quality,
       background: advancedParams.background,
       output_format: 'png',
-      ...(advancedParams.style === 'vivid' || advancedParams.style === 'natural' ? { style: advancedParams.style } : {}),
     } : {}),
     ...(request.images.length > 0 ? { image: request.images.map(img => `data:${img.mimeType};base64,${img.data}`) } : {}),
   };

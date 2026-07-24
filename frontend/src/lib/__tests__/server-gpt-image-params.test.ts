@@ -9,7 +9,7 @@ const serverSource = fs.readFileSync(
   'utf8',
 );
 
-describe('backend GPT Image advanced params forwarding', () => {
+describe('backend GPT Image advanced params normalization', () => {
   it('does not contain legacy GPT Image SKU gating or token suffix logic', () => {
     expect(serverSource).not.toContain('gpt-image-2-fast');
     expect(serverSource).not.toContain('gpt-image-2-plus');
@@ -18,18 +18,25 @@ describe('backend GPT Image advanced params forwarding', () => {
     expect(serverSource).not.toContain('supportsGptImageAdvancedParams(');
   });
 
-  it('forwards quality/background/output_format and conditional style in multipart edits', () => {
+  it('normalizes stored task parameters to the supported automatic values', () => {
+    expect(serverSource).toContain('Object.assign(body, normalizeGptImageAdvancedParams(body))');
+    expect(serverSource).toContain('quality: DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.quality');
+    expect(serverSource).toContain('style: DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.style');
+    expect(serverSource).toContain('background: DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.background');
+  });
+
+  it('forwards only automatic parameters in multipart edits', () => {
     expect(serverSource).toContain("formData.append('quality', advancedParams.quality)");
     expect(serverSource).toContain("formData.append('background', advancedParams.background)");
     expect(serverSource).toContain("formData.append('output_format', 'png')");
-    expect(serverSource).toContain("formData.append('style', advancedParams.style)");
+    expect(serverSource).not.toContain("formData.append('style', advancedParams.style)");
   });
 
-  it('forwards quality/background/output_format and conditional style in JSON generations', () => {
+  it('forwards only automatic parameters in JSON generations', () => {
     expect(serverSource).toContain('quality: advancedParams.quality');
     expect(serverSource).toContain('background: advancedParams.background');
     expect(serverSource).toContain("output_format: 'png'");
-    expect(serverSource).toContain("advancedParams.style === 'vivid' || advancedParams.style === 'natural' ? { style: advancedParams.style } : {}");
+    expect(serverSource).not.toContain("advancedParams.style === 'vivid' || advancedParams.style === 'natural' ? { style: advancedParams.style } : {}");
   });
 
   it('routes OpenAI image endpoint by mode rather than legacy model names', () => {

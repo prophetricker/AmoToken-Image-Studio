@@ -5,6 +5,9 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import {
+  AMOTOKEN_GPT_IMAGE_BACKGROUND_OPTIONS,
+  AMOTOKEN_GPT_IMAGE_QUALITY_OPTIONS,
+  AMOTOKEN_GPT_IMAGE_STYLE_OPTIONS,
   DEFAULT_GPT_IMAGE_ADVANCED_PARAMS,
   GPT_IMAGE_BACKGROUND_OPTIONS,
   GPT_IMAGE_QUALITY_OPTIONS,
@@ -46,7 +49,7 @@ export function GptImageAdvancedParamsControl({
   disabled = false,
   variant = 'ghost',
   size = 'xs',
-  qualityOptions = GPT_IMAGE_QUALITY_OPTIONS,
+  qualityOptions = AMOTOKEN_GPT_IMAGE_QUALITY_OPTIONS,
 }: GptImageAdvancedParamsControlProps) {
   const triggerClass = cn(
     buttonVariants({ variant, size }),
@@ -73,13 +76,13 @@ export function GptImageAdvancedParamsControl({
           />
           <ParamGroup
             label="风格"
-            options={GPT_IMAGE_STYLE_OPTIONS}
+            options={AMOTOKEN_GPT_IMAGE_STYLE_OPTIONS}
             value={value.style}
             onSelect={updateStyle}
           />
           <ParamGroup
             label="背景"
-            options={GPT_IMAGE_BACKGROUND_OPTIONS}
+            options={AMOTOKEN_GPT_IMAGE_BACKGROUND_OPTIONS}
             value={value.background}
             onSelect={updateBackground}
           />
