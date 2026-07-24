@@ -45,7 +45,6 @@ import {
 } from '@/lib/workspace-task-service';
 import { cn } from '@/lib/utils';
 import { BA_RANDOM_URL, BING_WALLPAPER_URL } from '@/lib/constants';
-import { AmoTokenHarborScene } from '@/components/brand/AmoTokenHarborScene';
 
 type WorkspaceTab = 'image-generation' | 'agent' | 'reverse-prompt' | 'prompt-gallery' | 'gif' | 'assets' | 'canvas';
 
@@ -246,7 +245,6 @@ export function WorkspaceShell() {
         !wideMode && visibleActiveTab === 'agent' && 'h-dvh min-h-0 overflow-hidden'
       )}
     >
-      <AmoTokenHarborScene />
       <div className={cn(
         'flex-1 bg-transparent shadow-none sm:rounded-3xl sm:bg-card/95 sm:shadow-sm sm:border sm:border-border/70',
         wideMode && 'flex min-h-0 flex-col',
