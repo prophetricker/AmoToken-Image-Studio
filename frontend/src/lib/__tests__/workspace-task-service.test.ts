@@ -10,6 +10,7 @@ import {
   submitImageToImage,
   submitTextToImage,
   type SubmitActions,
+  type TextToImageSubmitInput,
 } from '@/lib/workspace-task-service';
 vi.mock('@/lib/ccode-task-client', async importOriginal => {
   const actual = await importOriginal<typeof import('@/lib/ccode-task-client')>();
@@ -33,6 +34,17 @@ const mockedAckNovaTask = vi.mocked(ackNovaTask);
 const mockedCreateNovaTask = vi.mocked(createNovaTask);
 const mockedDownloadAndStoreImages = vi.mocked(downloadAndStoreImages);
 const mockedResolveImageTaskProvider = vi.mocked(resolveImageTaskProvider);
+
+type QuoteFreeTextPatch = Partial<Omit<TextToImageSubmitInput, 'prompts'>> & {
+  providerModel?: string;
+};
+
+const invalidQuoteFreeTextCases: Array<[string, QuoteFreeTextPatch]> = [
+  ['2K', { outputSize: '2K', customSize: '2048x2048' }],
+  ['two outputs', { parallelCount: 2 }],
+  ['another provider model', { providerModel: 'gpt-image-1' }],
+  ['non-auto quality', { gptImageQuality: 'medium' }],
+];
 
 function makeJob(overrides: Partial<StoredJob> = {}): StoredJob {
   return {
@@ -188,6 +200,72 @@ describe('submitTextToImage', () => {
     expect(vi.mocked(actions.addJob).mock.calls[0][0].costEstimate).toBeUndefined();
     vi.useRealTimers();
   });
+
+  it('accepts a strict 1K legacy submission without inventing a quote or cost', async () => {
+    const { actions } = createActions(makeJob());
+    const onError = vi.fn();
+
+    const accepted = await submitTextToImage({
+      prompts: ['a harbor at sunrise'],
+      outputSize: '1K',
+      customSize: '1024x1024',
+      aspectRatio: '1:1',
+      temperature: 1,
+      model: AMOTOKEN_IMAGE_MODEL_ID,
+      gptImageQuality: 'auto',
+      gptImageStyle: 'auto',
+      gptImageBackground: 'auto',
+      parallelCount: 1,
+    }, actions, onError);
+
+    expect(accepted).toBe(true);
+    expect(onError).not.toHaveBeenCalled();
+    expect(mockedCreateNovaTask).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'gpt-image-2',
+      outputSize: '1K',
+      customSize: '1024x1024',
+      gptImageQuality: 'auto',
+      parallelCount: 1,
+      imageQuote: undefined,
+    }));
+    expect(actions.addJob).toHaveBeenCalledWith(expect.objectContaining({
+      output_size: '1K',
+      custom_size: '1024x1024',
+      imageQuote: undefined,
+    }));
+    expect(vi.mocked(actions.addJob).mock.calls[0][0].costEstimate).toBeUndefined();
+  });
+
+  it.each(invalidQuoteFreeTextCases)('blocks quote-free text submission for %s', async (_label, patch) => {
+    const { providerModel, ...inputPatch } = patch;
+    mockedResolveImageTaskProvider.mockReturnValue({
+      apiKey: 'test-api-key',
+      baseUrl: 'https://api.openai.com',
+      protocol: 'openai',
+      modelId: providerModel || 'gpt-image-2',
+    });
+    const { actions } = createActions(makeJob());
+    const onError = vi.fn();
+
+    const accepted = await submitTextToImage({
+      prompts: ['a poster'],
+      outputSize: '1K',
+      customSize: '1024x1024',
+      aspectRatio: '1:1',
+      temperature: 1,
+      model: AMOTOKEN_IMAGE_MODEL_ID,
+      gptImageQuality: 'auto',
+      gptImageStyle: 'auto',
+      gptImageBackground: 'auto',
+      parallelCount: 1,
+      ...inputPatch,
+    }, actions, onError);
+
+    expect(accepted).toBe(false);
+    expect(onError).toHaveBeenCalledWith('当前生图规格与报价不一致，请重新选择后再试');
+    expect(actions.addJob).not.toHaveBeenCalled();
+    expect(mockedCreateNovaTask).not.toHaveBeenCalled();
+  });
 });
 
 describe('submitImageToImage', () => {
@@ -276,6 +354,67 @@ describe('submitImageToImage', () => {
         currency: 'API_CREDIT',
       }),
     }));
+  });
+
+  it('accepts one strict 1K edit reference without a quote', async () => {
+    const { actions } = createActions(makeJob({ mode: 'image-to-image' }));
+    const onError = vi.fn();
+
+    const accepted = await submitImageToImage({
+      prompt: 'add a red sail',
+      files: [
+        { id: '1', name: '1.png', dataUrl: 'data:image/png;base64,one', mimeType: 'image/png' },
+      ],
+      outputSize: '1K',
+      customSize: '1536x1024',
+      aspectRatio: '3:2',
+      temperature: 1,
+      model: AMOTOKEN_IMAGE_MODEL_ID,
+      gptImageQuality: 'auto',
+      gptImageStyle: 'auto',
+      gptImageBackground: 'auto',
+      parallelCount: 1,
+    }, actions, onError);
+
+    expect(accepted).toBe(true);
+    expect(onError).not.toHaveBeenCalled();
+    expect(mockedCreateNovaTask).toHaveBeenCalledWith(expect.objectContaining({
+      mode: 'image-to-image',
+      images: [expect.objectContaining({ mimeType: 'image/png' })],
+      imageQuote: undefined,
+    }));
+    expect(actions.addJob).toHaveBeenCalledWith(expect.objectContaining({
+      referenceImageCount: 1,
+      imageQuote: undefined,
+    }));
+    expect(vi.mocked(actions.addJob).mock.calls[0][0].costEstimate).toBeUndefined();
+  });
+
+  it('blocks two edit references without a quote before task creation', async () => {
+    const { actions } = createActions(makeJob({ mode: 'image-to-image' }));
+    const onError = vi.fn();
+
+    const accepted = await submitImageToImage({
+      prompt: 'merge references',
+      files: [
+        { id: '1', name: '1.png', dataUrl: 'data:image/png;base64,one', mimeType: 'image/png' },
+        { id: '2', name: '2.png', dataUrl: 'data:image/png;base64,two', mimeType: 'image/png' },
+      ],
+      outputSize: '1K',
+      customSize: '1024x1024',
+      aspectRatio: '1:1',
+      temperature: 1,
+      model: AMOTOKEN_IMAGE_MODEL_ID,
+      gptImageQuality: 'auto',
+      gptImageStyle: 'auto',
+      gptImageBackground: 'auto',
+      parallelCount: 1,
+    }, actions, onError);
+
+    expect(accepted).toBe(false);
+    expect(onError).toHaveBeenCalledWith('当前生图规格与报价不一致，请重新选择后再试');
+    expect(actions.addJob).not.toHaveBeenCalled();
+    expect(mockedCreateNovaTask).not.toHaveBeenCalled();
   });
 
   it('blocks task creation when the submitted quote does not match the requested SKU', async () => {

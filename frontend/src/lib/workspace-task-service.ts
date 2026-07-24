@@ -18,6 +18,7 @@ import { generateUUID } from '@/lib/uuid';
 import { downloadAndStoreImages, type DownloadResult, type ImageDownloadProgressItem } from '@/lib/image-downloader';
 import { classifyFailureFromMessage, getTaskFailureDisplayInfo } from '@/lib/task-failure';
 import { isAmoTokenImageQuoteFreshForToken, type AmoTokenImageQuote } from '@/lib/amotoken-image-quote';
+import { isLegacyAmoTokenImageSubmission } from '@/lib/amotoken-image-fallback';
 
 export interface TextToImageSubmitInput {
   prompts: string[];
@@ -30,7 +31,7 @@ export interface TextToImageSubmitInput {
   gptImageStyle: GptImageStyle;
   gptImageBackground: GptImageBackground;
   parallelCount: ParallelCount;
-  quote: AmoTokenImageQuote;
+  quote?: AmoTokenImageQuote;
 }
 
 export interface ImageToImageSubmitInput {
@@ -45,7 +46,7 @@ export interface ImageToImageSubmitInput {
   gptImageStyle: GptImageStyle;
   gptImageBackground: GptImageBackground;
   parallelCount: ParallelCount;
-  quote: AmoTokenImageQuote;
+  quote?: AmoTokenImageQuote;
 }
 
 export interface SubmitActions {
@@ -123,6 +124,28 @@ function quoteMatchesSubmission(
     && quote.currency === 'API_CREDIT';
 }
 
+function submissionHasValidBillingContext(
+  input: TextToImageSubmitInput | ImageToImageSubmitInput,
+  mode: AmoTokenImageQuote['mode'],
+  providerModel: string,
+  referenceImageCount: number,
+  token: string,
+): boolean {
+  if (input.quote) {
+    return quoteMatchesSubmission(input.quote, input, mode, providerModel, referenceImageCount, token);
+  }
+
+  return isLegacyAmoTokenImageSubmission({
+    providerModel,
+    mode,
+    outputSize: input.outputSize,
+    size: input.customSize,
+    quality: input.gptImageQuality,
+    count: input.parallelCount,
+    referenceImageCount,
+  });
+}
+
 function createBaseJob(
   mode: StoredJob['mode'],
   prompt: string,
@@ -135,7 +158,7 @@ function createBaseJob(
   gptImageStyle: GptImageStyle,
   gptImageBackground: GptImageBackground,
   parallelCount: ParallelCount,
-  imageQuote: AmoTokenImageQuote,
+  imageQuote?: AmoTokenImageQuote,
   refImages?: StoredJob['refImages']
 ): StoredJob {
   const advancedParams = getGptImageAdvancedParamsForModel(model as ModelId, {
@@ -382,7 +405,7 @@ export async function submitTextToImage(
     return false;
   }
 
-  if (!quoteMatchesSubmission(input.quote, input, 'generation', provider.modelId, 0, apiKey)) {
+  if (!submissionHasValidBillingContext(input, 'generation', provider.modelId, 0, apiKey)) {
     onError('当前生图规格与报价不一致，请重新选择后再试');
     return false;
   }
@@ -450,7 +473,7 @@ export async function submitImageToImage(
     return false;
   }
 
-  if (!quoteMatchesSubmission(input.quote, input, 'edit', provider.modelId, input.files.length, apiKey)) {
+  if (!submissionHasValidBillingContext(input, 'edit', provider.modelId, input.files.length, apiKey)) {
     onError('当前生图规格与报价不一致，请重新选择后再试');
     return false;
   }
