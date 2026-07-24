@@ -9,6 +9,8 @@ const {
   getPromptImageCacheKey,
   isAllowedPromptImageUrl,
 } = require('./prompt-image-cache');
+const { authorizeImageTaskBilling } = require('./image-billing-context');
+const { fetchImageProductPayload } = require('./image-product-proxy');
 
 const ENV_FILE_PATH = path.join(process.cwd(), '.env');
 const TASK_STATUS = {
@@ -1276,6 +1278,28 @@ async function fetchWithTimeout(url, init) {
   }
 }
 
+async function fetchAuthoritativeImageQuote(apiKey, quoteRequest) {
+  const response = await fetchWithTimeout(`${resolveImageProductApiBaseUrl()}/v1/images/quote`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(quoteRequest),
+  });
+  let data = null;
+  try { data = await response.json(); } catch { /* handled below */ }
+  if (!response.ok) {
+    const upstreamMessage = typeof data?.error === 'string' ? data.error : '';
+    throw createHttpError(
+      response.status === 401 || response.status === 403 ? response.status : 502,
+      'IMAGE_QUOTE_UNAVAILABLE',
+      upstreamMessage || '暂时无法核对生图报价，请稍后重试',
+    );
+  }
+  return data;
+}
+
 async function generateNovaImage(apiKey, request) {
   // 开源版：根据前端传入的 protocol 字段路由到对应的 API 协议
   const baseUrl = request.baseUrl || resolveNovaApiBaseUrl();
@@ -1769,13 +1793,14 @@ async function handleApi(req, res, pathname) {
         sendJson(res, 401, { error: '请先粘贴 AmoToken 令牌' });
         return true;
       }
-      const response = await fetchWithTimeout(`${resolveImageProductApiBaseUrl()}/v1/images/catalog`, {
-        method: 'GET',
-        headers: { Authorization: authorization },
-      });
-      let data = null;
-      try { data = await response.json(); } catch { /* ignore */ }
-      sendJson(res, response.status, data || { error: '暂时无法读取生图模型' }, {
+      const { status, data } = await fetchImageProductPayload(
+        () => fetchWithTimeout(`${resolveImageProductApiBaseUrl()}/v1/images/catalog`, {
+          method: 'GET',
+          headers: { Authorization: authorization },
+        }),
+        '暂时无法读取生图模型',
+      );
+      sendJson(res, status, data, {
         'Cache-Control': 'no-store',
       });
       return true;
@@ -1788,17 +1813,18 @@ async function handleApi(req, res, pathname) {
         return true;
       }
       const body = await readJsonBody(req);
-      const response = await fetchWithTimeout(`${resolveImageProductApiBaseUrl()}/v1/images/quote`, {
-        method: 'POST',
-        headers: {
-          Authorization: authorization,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-      let data = null;
-      try { data = await response.json(); } catch { /* ignore */ }
-      sendJson(res, response.status, data || { error: '暂时无法获取生图报价' }, {
+      const { status, data } = await fetchImageProductPayload(
+        () => fetchWithTimeout(`${resolveImageProductApiBaseUrl()}/v1/images/quote`, {
+          method: 'POST',
+          headers: {
+            Authorization: authorization,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body),
+        }),
+        '暂时无法获取生图报价',
+      );
+      sendJson(res, status, data, {
         'Cache-Control': 'no-store',
       });
       return true;
@@ -1958,6 +1984,8 @@ async function handleApi(req, res, pathname) {
 
     if (req.method === 'POST' && apiPathname === '/api/nova/tasks') {
       const body = await readJsonBody(req);
+      validateCreatePayload(body);
+      body.imageQuote = await authorizeImageTaskBilling(body, fetchAuthoritativeImageQuote);
       const taskId = createTask(body, req);
       sendJson(res, 202, { taskId });
       return true;

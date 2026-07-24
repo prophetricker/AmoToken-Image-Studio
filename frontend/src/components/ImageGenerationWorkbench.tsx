@@ -47,6 +47,7 @@ import {
   getAmoTokenImageModeCapabilities,
   getAmoTokenImageModelOptions,
   getAmoTokenImageProductSizes,
+  isAmoTokenImageCatalogFallbackEligibleError,
   normalizeAmoTokenCatalogModelId,
   type AmoTokenImageCatalog,
   type AmoTokenImageOperationMode,
@@ -313,9 +314,21 @@ export function ImageGenerationWorkbench({
       setCatalogSource('exact');
       setCatalogStatus('ready');
       setCatalogMessage('');
-    }).catch(() => {
+    }).catch(error => {
       if (cancelled) return;
       quoteRequestIdRef.current += 1;
+      if (!isAmoTokenImageCatalogFallbackEligibleError(error)) {
+        setCatalog(null);
+        setCatalogSource('exact');
+        setCatalogStatus('error');
+        setCatalogMessage(error instanceof Error
+          ? error.message
+          : '暂时无法读取生图模型，请稍后重试');
+        setQuote(null);
+        setQuoteStatus('idle');
+        setQuoteMessage('');
+        return;
+      }
       setCatalog(LEGACY_AMOTOKEN_IMAGE_CATALOG);
       setCatalogSource('legacy');
       setCatalogStatus('ready');

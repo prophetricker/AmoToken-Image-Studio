@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { requestAmoTokenImageToken } from '../amotoken-key-picker';
 
 const TEST_KEY = 'sk-local-test-placeholder';
@@ -30,6 +30,10 @@ describe('requestAmoTokenImageToken', () => {
     });
   });
 
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('opens a state-bound URL with only callback origin and state', () => {
     const popup = createPopup();
     vi.mocked(window.open).mockReturnValue(popup);
@@ -45,6 +49,17 @@ describe('requestAmoTokenImageToken', () => {
     expect(queryKeys).toEqual(['callback_origin', 'state']);
     expect(url.searchParams.get('callback_origin')).toBe(window.location.origin);
     expect(url.searchParams.get('state')).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('uses an explicitly configured console origin for local integration', () => {
+    vi.stubEnv('NEXT_PUBLIC_AMOTOKEN_CONSOLE_ORIGIN', 'http://127.0.0.1:43120');
+    const popup = createPopup();
+    vi.mocked(window.open).mockReturnValue(popup);
+
+    void requestAmoTokenImageToken();
+
+    const [rawUrl] = vi.mocked(window.open).mock.calls[0] ?? [];
+    expect(new URL(String(rawUrl)).origin).toBe('http://127.0.0.1:43120');
   });
 
   it('resolves only an exact message from the selected popup and console origin', async () => {

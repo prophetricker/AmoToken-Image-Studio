@@ -4,6 +4,7 @@ import {
   fetchAmoTokenImageCatalog,
   getAmoTokenImageModeCapabilities,
   getAmoTokenImageModelOptions,
+  isAmoTokenImageCatalogFallbackEligibleError,
   normalizeAmoTokenCatalogModelId,
   normalizeAmoTokenImageCatalog,
 } from '@/lib/amotoken-image-catalog';
@@ -168,5 +169,54 @@ describe('AmoToken image product catalog', () => {
       headers: { Authorization: 'Bearer sk-user-b' },
       cache: 'no-store',
     });
+  });
+
+  it.each([404, 500, 503])('marks catalog HTTP %s as eligible for the legacy fallback', async status => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response('{}', { status }));
+
+    const error = await fetchAmoTokenImageCatalog('sk-user-a', fetchImpl).catch(reason => reason);
+
+    expect(isAmoTokenImageCatalogFallbackEligibleError(error)).toBe(true);
+  });
+
+  it.each([400, 401, 403, 429])('keeps catalog HTTP %s blocked instead of using the fallback', async status => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response('{}', { status }));
+
+    const error = await fetchAmoTokenImageCatalog('sk-user-a', fetchImpl).catch(reason => reason);
+
+    expect(isAmoTokenImageCatalogFallbackEligibleError(error)).toBe(false);
+  });
+
+  it('allows fallback on a network failure but not on an invalid successful catalog', async () => {
+    const networkError = await fetchAmoTokenImageCatalog(
+      'sk-user-a',
+      vi.fn().mockRejectedValue(new TypeError('fetch failed')),
+    ).catch(reason => reason);
+    expect(isAmoTokenImageCatalogFallbackEligibleError(networkError)).toBe(true);
+
+    clearAmoTokenImageCatalogCache();
+    const invalidCatalogError = await fetchAmoTokenImageCatalog(
+      'sk-user-a',
+      vi.fn().mockResolvedValue(new Response(JSON.stringify({ catalog_version: 'empty-v1', data: [] }), { status: 200 })),
+    ).catch(reason => reason);
+    expect(isAmoTokenImageCatalogFallbackEligibleError(invalidCatalogError)).toBe(false);
+  });
+
+  it('allows fallback when the response body stream fails but blocks malformed JSON', async () => {
+    const interruptedResponse = new Response('{}', { status: 200 });
+    vi.spyOn(interruptedResponse, 'json').mockRejectedValue(new TypeError('terminated'));
+    const interruptedError = await fetchAmoTokenImageCatalog(
+      'sk-user-a',
+      vi.fn().mockResolvedValue(interruptedResponse),
+    ).catch(reason => reason);
+    expect(isAmoTokenImageCatalogFallbackEligibleError(interruptedError)).toBe(true);
+
+    clearAmoTokenImageCatalogCache();
+    const malformedResponse = new Response('{', { status: 200 });
+    const malformedError = await fetchAmoTokenImageCatalog(
+      'sk-user-a',
+      vi.fn().mockResolvedValue(malformedResponse),
+    ).catch(reason => reason);
+    expect(isAmoTokenImageCatalogFallbackEligibleError(malformedError)).toBe(false);
   });
 });

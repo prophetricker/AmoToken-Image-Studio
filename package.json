@@ -13,7 +13,7 @@
     "lint": "cd frontend && npm run lint && cd ../backend && npm run lint",
     "test": "cd frontend && npm run test",
     "test:ui": "cd frontend && npm run test:ui",
-    "test:run": "cd frontend && npm run test:run",
+    "test:run": "cd frontend && npm run test:run && cd ../backend && npm test",
     "go": "node scripts/pack.js",
     "install:all": "cd frontend && npm install && cd ../backend && npm install"
   },

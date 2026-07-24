@@ -102,7 +102,7 @@ function mockCatalogAndQuoteFetch(options: {
   return fetchMock;
 }
 
-function mockCatalogFailure(status: 404 | 503) {
+function mockCatalogFailure(status: 401 | 403 | 404 | 503) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     if (String(input) === '/api/nova/image-products/catalog') {
       return new Response('{}', { status });
@@ -281,6 +281,32 @@ describe('ImageGenerationWorkbench AmoToken setup', () => {
       files: [expect.objectContaining({ id: 'ref-1' })],
     })));
     expect(fetchMock.mock.calls.some(call => String(call[0]) === '/api/nova/image-products/quote')).toBe(false);
+  });
+
+  it.each([401, 403] as const)('keeps catalog HTTP %s blocked instead of enabling legacy generation', async status => {
+    saveAmoTokenToken('sk-test-token');
+    clearAmoTokenImageCatalogCache();
+    const fetchMock = mockCatalogFailure(status);
+    render(<ImageGenerationWorkbench onSubmitText={vi.fn()} onSubmitImage={vi.fn()} />);
+
+    expect(await screen.findByText('AmoToken 令牌无效或无权使用生图模型')).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText('描述你想要生成的图像...'), {
+      target: { value: '生成一张港口日出' },
+    });
+    expect(screen.getByRole('button', { name: '按文生图提交' })).toBeDisabled();
+    expect(screen.queryByText('精确报价暂不可用')).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(call => String(call[0]) === '/api/nova/image-products/quote')).toBe(false);
+  });
+
+  it('keeps an invalid successful catalog blocked', async () => {
+    saveAmoTokenToken('sk-test-token');
+    clearAmoTokenImageCatalogCache();
+    mockCatalogAndQuoteFetch({ catalog: { object: 'list', catalog_version: 'empty-v1', data: [] } });
+    render(<ImageGenerationWorkbench onSubmitText={vi.fn()} onSubmitImage={vi.fn()} />);
+
+    expect(await screen.findByText('当前没有可用的生图模型')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '按文生图提交' })).toBeDisabled();
+    expect(screen.queryByText('精确报价暂不可用')).not.toBeInTheDocument();
   });
 
   it('uses generation catalog capabilities and shows an exact API-credit quote', async () => {

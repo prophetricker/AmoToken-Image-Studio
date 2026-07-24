@@ -37,6 +37,16 @@ export interface AmoTokenImageModeCapabilities {
 
 type FetchLike = typeof fetch;
 
+class AmoTokenImageCatalogRequestError extends Error {
+  readonly fallbackEligible: boolean;
+
+  constructor(message: string, fallbackEligible: boolean, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'AmoTokenImageCatalogRequestError';
+    this.fallbackEligible = fallbackEligible;
+  }
+}
+
 const CATALOG_CACHE_TTL_MS = 30_000;
 const catalogCache = new Map<string, { expiresAt: number; catalog: AmoTokenImageCatalog }>();
 let activeCatalogToken = '';
@@ -208,6 +218,10 @@ export function clearAmoTokenImageCatalogCache(): void {
   activeCatalog = null;
 }
 
+export function isAmoTokenImageCatalogFallbackEligibleError(error: unknown): boolean {
+  return error instanceof AmoTokenImageCatalogRequestError && error.fallbackEligible;
+}
+
 export function isModelInCurrentAmoTokenImageCatalog(token: string, modelId: string): boolean {
   const normalizedToken = token.trim();
   if (!normalizedToken || normalizedToken !== activeCatalogToken) return false;
@@ -230,18 +244,42 @@ export async function fetchAmoTokenImageCatalog(
   const cached = catalogCache.get(normalizedToken);
   if (cached && cached.expiresAt > Date.now()) return cached.catalog;
 
-  const response = await fetchImpl('/api/nova/image-products/catalog', {
-    method: 'GET',
-    headers: { Authorization: `Bearer ${normalizedToken}` },
-    cache: 'no-store',
-  });
+  let response: Response;
+  try {
+    response = await fetchImpl('/api/nova/image-products/catalog', {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${normalizedToken}` },
+      cache: 'no-store',
+    });
+  } catch (error) {
+    throw new AmoTokenImageCatalogRequestError(
+      '暂时无法读取生图模型，请稍后重试',
+      true,
+      { cause: error },
+    );
+  }
   if (!response.ok) {
-    throw new Error(response.status === 401 || response.status === 403
-      ? 'AmoToken 令牌无效或无权使用生图模型'
-      : '暂时无法读取生图模型，请稍后重试');
+    const fallbackEligible = response.status === 404 || response.status >= 500;
+    throw new AmoTokenImageCatalogRequestError(
+      response.status === 401 || response.status === 403
+        ? 'AmoToken 令牌无效或无权使用生图模型'
+        : '暂时无法读取生图模型，请稍后重试',
+      fallbackEligible,
+    );
   }
 
-  const catalog = normalizeAmoTokenImageCatalog(await response.json());
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    if (error instanceof SyntaxError) throw error;
+    throw new AmoTokenImageCatalogRequestError(
+      '暂时无法读取生图模型，请稍后重试',
+      true,
+      { cause: error },
+    );
+  }
+  const catalog = normalizeAmoTokenImageCatalog(payload);
   if (activeCatalogToken === normalizedToken) {
     catalogCache.set(normalizedToken, { expiresAt: Date.now() + CATALOG_CACHE_TTL_MS, catalog });
     activeCatalog = catalog;

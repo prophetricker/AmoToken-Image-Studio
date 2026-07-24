@@ -19,6 +19,11 @@ function normalizeOrigin(value: string): string {
   return new URL(value).origin;
 }
 
+function getConfiguredConsoleOrigin(): string {
+  return process.env.NEXT_PUBLIC_AMOTOKEN_CONSOLE_ORIGIN?.trim()
+    || DEFAULT_CONSOLE_ORIGIN;
+}
+
 function createState(): string {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
@@ -39,7 +44,7 @@ function isPickerMessage(value: unknown): value is AmoTokenKeyPickerMessage {
 export function requestAmoTokenImageToken(
   options: AmoTokenKeyPickerOptions = {},
 ): Promise<string> {
-  const consoleOrigin = normalizeOrigin(options.consoleOrigin ?? DEFAULT_CONSOLE_ORIGIN);
+  const consoleOrigin = normalizeOrigin(options.consoleOrigin ?? getConfiguredConsoleOrigin());
   const callbackOrigin = normalizeOrigin(options.currentOrigin ?? window.location.origin);
   const state = createState();
   const pickerUrl = new URL('/image-studio/connect', consoleOrigin);
@@ -60,13 +65,11 @@ export function requestAmoTokenImageToken(
 
   return new Promise((resolve, reject) => {
     let settled = false;
-    let timeoutId: number | undefined;
-    let pollId: number | undefined;
 
     const cleanup = () => {
       window.removeEventListener('message', handleMessage);
-      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
-      if (pollId !== undefined) window.clearInterval(pollId);
+      window.clearTimeout(timeoutId);
+      window.clearInterval(pollId);
     };
 
     const fail = (error: Error) => {
@@ -87,11 +90,11 @@ export function requestAmoTokenImageToken(
     };
 
     window.addEventListener('message', handleMessage);
-    timeoutId = window.setTimeout(
+    const timeoutId = window.setTimeout(
       () => fail(new Error('AmoToken key picker timed out')),
       timeoutMs,
     );
-    pollId = window.setInterval(() => {
+    const pollId = window.setInterval(() => {
       if (popup.closed) fail(new Error('AmoToken key picker was closed'));
     }, pollIntervalMs);
   });
