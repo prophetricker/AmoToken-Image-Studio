@@ -3,6 +3,9 @@ services:
     build: .
     image: amotoken/nova-image-studio:v0.5-local
     container_name: nova-image-studio
+    cpus: "1.5"
+    mem_limit: "1536m"
+    memswap_limit: "1536m"
     ports:
       - "127.0.0.1:3001:3000"
     extra_hosts:
