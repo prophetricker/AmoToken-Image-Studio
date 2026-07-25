@@ -8,8 +8,11 @@
 import { ackNovaTask, createNovaTask, getNovaTask, resolveImageTaskProvider, type NovaTaskResponse, type NovaTaskStatus, type ImageReference } from "@/lib/ccode-task-client";
 import { normalizeModel } from "@/lib/model-capabilities";
 import { getUserFacingFailureMessage } from "@/lib/task-failure";
+import { fetchAmoTokenImageCatalog, type AmoTokenImageOperationMode } from "@/lib/amotoken-image-catalog";
+import { fetchAmoTokenImageQuote } from "@/lib/amotoken-image-quote";
 import { compressReferenceDataUrl } from "./lib/image-utils";
 import { uploadImage } from "./lib/image-storage";
+import { resolveCanvasImageProduct } from "./canvas-product-policy";
 import type { CanvasGenerationConfig } from "./types";
 import type { ReferenceImage } from "./types-media";
 
@@ -52,38 +55,86 @@ function toUserFacingGenerationError(error: unknown): Error {
   return new Error(message);
 }
 
+async function resolveCanvasBillingContext(args: {
+  apiKey: string;
+  providerModel: string;
+  mode: AmoTokenImageOperationMode;
+  config: CanvasGenerationConfig;
+  count: number;
+  referenceImageCount: number;
+}) {
+  const catalog = await fetchAmoTokenImageCatalog(args.apiKey);
+  const product = resolveCanvasImageProduct({
+    catalog,
+    providerModel: args.providerModel,
+    mode: args.mode,
+    config: { ...args.config, count: args.count as CanvasGenerationConfig["count"] },
+    referenceImageCount: args.referenceImageCount,
+  });
+  if (!product.available) throw new Error(product.reason);
+
+  const quote = await fetchAmoTokenImageQuote(args.apiKey, {
+    model: product.model,
+    mode: product.mode,
+    size: product.size,
+    quality: product.quality,
+    count: product.count,
+    referenceImageCount: product.referenceImageCount,
+  });
+  return { product, quote };
+}
+
+async function createCanvasGenerationTask(args: {
+  prompt: string;
+  referenceImages: ReferenceImage[];
+  config: CanvasGenerationConfig;
+}, count: number): Promise<string> {
+  const provider = resolveImageTaskProvider(resolveTaskModel(args.config));
+  const apiKey = provider.apiKey;
+  if (!apiKey) throw new CanvasApiKeyMissingError();
+
+  const candidateImages = args.referenceImages.filter(image => image.dataUrl && image.dataUrl.length >= 100);
+  const operationMode: AmoTokenImageOperationMode = candidateImages.length > 0 ? "edit" : "generation";
+  const { product, quote } = await resolveCanvasBillingContext({
+    apiKey,
+    providerModel: provider.modelId,
+    mode: operationMode,
+    config: args.config,
+    count,
+    referenceImageCount: candidateImages.length,
+  });
+  const imageRefs = (await Promise.all(candidateImages.map(toImageReference))).filter((ref): ref is ImageReference => ref !== null);
+  try {
+    return await createNovaTask({
+      apiKey,
+      baseUrl: provider.baseUrl,
+      protocol: provider.protocol,
+      mode: product.mode === "edit" ? "image-to-image" : "text-to-image",
+      prompt: args.prompt,
+      outputSize: product.resolutionTier,
+      customSize: product.size,
+      aspectRatio: product.aspectRatio,
+      temperature: args.config.temperature,
+      model: product.model,
+      gptImageQuality: product.quality,
+      gptImageStyle: "auto",
+      gptImageBackground: "auto",
+      parallelCount: product.count,
+      images: imageRefs,
+      imageQuote: quote,
+    });
+  } catch (error) {
+    throw toUserFacingGenerationError(error);
+  }
+}
+
 /** 提交单个节点的生成任务（count=1），返回 taskId。 */
 export async function submitNodeGeneration(args: {
   prompt: string;
   referenceImages: ReferenceImage[];
   config: CanvasGenerationConfig;
 }): Promise<string> {
-  const provider = resolveImageTaskProvider(resolveTaskModel(args.config));
-  const apiKey = provider.apiKey;
-  if (!apiKey) throw new CanvasApiKeyMissingError();
-
-  const imageRefs = (await Promise.all(args.referenceImages.map(toImageReference))).filter((ref): ref is ImageReference => ref !== null);
-  try {
-    return await createNovaTask({
-      apiKey,
-      baseUrl: provider.baseUrl,
-      protocol: provider.protocol,
-      mode: imageRefs.length > 0 ? "image-to-image" : "text-to-image",
-      prompt: args.prompt,
-      outputSize: args.config.outputSize,
-      customSize: args.config.customSize,
-      aspectRatio: args.config.aspectRatio,
-      temperature: args.config.temperature,
-      model: provider.modelId,
-      gptImageQuality: args.config.gptImageQuality,
-      gptImageStyle: args.config.gptImageStyle,
-      gptImageBackground: args.config.gptImageBackground,
-      parallelCount: 1,
-      images: imageRefs,
-    });
-  } catch (error) {
-    throw toUserFacingGenerationError(error);
-  }
+  return createCanvasGenerationTask(args, 1);
 }
 
 /** 轮询单个任务直到终态；通过 onStatus 回调实时通知调用方。 */
@@ -137,34 +188,7 @@ export async function generateCanvasImages(args: {
   onStatus?: (status: NovaTaskStatus) => void;
   signal?: AbortSignal;
 }): Promise<CanvasGeneratedImage[]> {
-  const provider = resolveImageTaskProvider(resolveTaskModel(args.config));
-  const apiKey = provider.apiKey;
-  if (!apiKey) throw new CanvasApiKeyMissingError();
-
-  const imageRefs = (await Promise.all(args.referenceImages.map(toImageReference))).filter((ref): ref is ImageReference => ref !== null);
-  let taskId: string;
-  try {
-    taskId = await createNovaTask({
-      apiKey,
-      baseUrl: provider.baseUrl,
-      protocol: provider.protocol,
-      mode: imageRefs.length > 0 ? "image-to-image" : "text-to-image",
-      prompt: args.prompt,
-      outputSize: args.config.outputSize,
-      customSize: args.config.customSize,
-      aspectRatio: args.config.aspectRatio,
-      temperature: args.config.temperature,
-      model: provider.modelId,
-      gptImageQuality: args.config.gptImageQuality,
-      gptImageStyle: args.config.gptImageStyle,
-      gptImageBackground: args.config.gptImageBackground,
-      parallelCount: args.config.count,
-      images: imageRefs,
-    });
-  } catch (error) {
-    throw toUserFacingGenerationError(error);
-  }
-
+  const taskId = await createCanvasGenerationTask(args, args.config.count);
   const images = await pollNodeTask(taskId, (s) => args.onStatus?.(s), args.signal);
   return images;
 }

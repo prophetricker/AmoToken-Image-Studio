@@ -16,9 +16,9 @@ describe('candidate capability gray switch', () => {
     window.history.replaceState(null, '', '/');
   });
 
-  it('keeps candidate modes hidden by default', () => {
-    expect(isCandidateModesEnabled()).toBe(false);
-    expect(resolveCandidateModesEnabled()).toBe(false);
+  it('publishes GIF and canvas by default', () => {
+    expect(isCandidateModesEnabled()).toBe(true);
+    expect(resolveCandidateModesEnabled()).toBe(true);
   });
 
   it('enables candidate modes when the build-time switch is set', () => {
@@ -47,6 +47,12 @@ describe('candidate capability gray switch', () => {
     window.localStorage.setItem(CANDIDATE_MODES_STORAGE_KEY, 'enabled');
 
     expect(resolveCandidateModesEnabled()).toBe(true);
+  });
+
+  it('reuses the stored emergency opt-out when no query is present', () => {
+    window.localStorage.setItem(CANDIDATE_MODES_STORAGE_KEY, 'disabled');
+
+    expect(resolveCandidateModesEnabled()).toBe(false);
   });
 
   it('treats only gif and canvas as candidate tabs', () => {

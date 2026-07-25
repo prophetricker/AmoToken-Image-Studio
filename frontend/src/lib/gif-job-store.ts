@@ -1,13 +1,12 @@
 import { isGptImageModel } from '@/lib/gemini-config';
 import type { RefImageData } from '@/lib/job-store';
-import { supportsCustomSize, type GptImageBackground, type GptImageQuality, type GptImageStyle } from '@/lib/model-capabilities';
-import { resolveCandidateModesEnabled } from '@/lib/candidate-capabilities';
+import type { GptImageBackground, GptImageQuality, GptImageStyle } from '@/lib/model-capabilities';
 import {
-  AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID,
-  AMOTOKEN_IMAGE_MODEL_ID,
   getDefaultImageModel,
   getCompleteImageModels,
+  getImageModelOutputSizes,
   loadRegistry,
+  type NovaModelRegistry,
 } from '@/lib/nova-models';
 
 export type GifModel = string;
@@ -44,17 +43,19 @@ export interface ActiveGifJob {
 const STORAGE_KEY = 'nova-gif-active-job';
 const TEMPLATE_URL = '/togif.png';
 
-export const GIF_MAX_REF_IMAGES = 6;
+export const GIF_MAX_REF_IMAGES = 3;
 export const GIF_DEFAULT_FRAME_DELAY_MS = 120;
 export const GIF_DEFAULT_LOOP_COUNT = 0;
 export const GIF_DEFAULT_FRAME_PADDING = 1.5;
 export const GIF_MAX_FRAME_PADDING = 5;
-export const GIF_GRID_CUSTOM_SIZE = '3264x2448';
+export const GIF_GRID_CUSTOM_SIZE = '2048x1536';
 export const GIF_GRID_OUTPUT_SIZE = '2K' as const;
 export const GIF_GRID_ASPECT_RATIO = '4:3' as const;
 export const GIF_GRID_COLS = 4;
 export const GIF_GRID_ROWS = 3;
 export const GIF_FRAME_COUNT = GIF_GRID_COLS * GIF_GRID_ROWS;
+export const GIF_FRAME_WIDTH = 512;
+export const GIF_FRAME_HEIGHT = 512;
 
 export function loadActiveGifJob(): ActiveGifJob | null {
   if (typeof window === 'undefined') return null;
@@ -128,29 +129,23 @@ export function needsOverwriteConfirm(job: ActiveGifJob | null): boolean {
   return job.status !== 'idle';
 }
 
-export function getGifCompatibleModels(): { value: GifModel; label: string }[] {
-  const registry = loadRegistry();
+export function getGifCompatibleModels(
+  registry: NovaModelRegistry = loadRegistry(),
+): { value: GifModel; label: string }[] {
   const configuredModels = getCompleteImageModels(registry);
   const compatibleModels = configuredModels
-    .filter((model) => isGptImageModel(model.id) && supportsCustomSize(model.id) && model.maxOutputSize === '4K')
+    .filter((model) => (
+      isGptImageModel(model.id)
+      && getImageModelOutputSizes(model).includes(GIF_GRID_OUTPUT_SIZE)
+    ))
     .map((model) => ({ value: model.id, label: model.name }));
-
-  if (
-    resolveCandidateModesEnabled()
-    && configuredModels.some((model) => model.id === AMOTOKEN_IMAGE_MODEL_ID)
-  ) {
-    compatibleModels.push({
-      value: AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID,
-      label: 'AmoToken GPT Image 2 4K 灰测',
-    });
-  }
 
   return compatibleModels;
 }
 
 export function getDefaultGifModelId(): GifModel {
   const registry = loadRegistry();
-  const options = getGifCompatibleModels();
+  const options = getGifCompatibleModels(registry);
   const preferred = getDefaultImageModel(registry, 'textToImage');
   if (preferred && options.some((option) => option.value === preferred.id)) {
     return preferred.id;

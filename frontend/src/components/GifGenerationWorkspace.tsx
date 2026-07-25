@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { Loader2 } from 'lucide-react';
 import { PromptOptimizeDialog } from '@/components/PromptOptimizeDialog';
@@ -17,7 +17,12 @@ import { GifModeChoiceDialog } from '@/components/GifModeChoiceDialog';
 import { GifFrameTuner } from '@/components/GifFrameTuner';
 import { prepareUploadImage, getOptimizationBadge } from '@/lib/upload-image-cache';
 import { extractGridCells, type ExtractedGrid } from '@/lib/gif-encoder';
-import { estimateImageCost, formatCostEstimate } from '@/lib/image-cost-estimator';
+import { resolveImageTaskProvider } from '@/lib/ccode-task-client';
+import {
+  fetchAmoTokenImageQuote,
+  formatAmoTokenImageQuote,
+  type AmoTokenImageQuote,
+} from '@/lib/amotoken-image-quote';
 import {
   DEFAULT_GPT_IMAGE_ADVANCED_PARAMS,
   getGptImageAdvancedParamsForModel,
@@ -30,6 +35,7 @@ import {
   GIF_DEFAULT_FRAME_DELAY_MS,
   GIF_DEFAULT_LOOP_COUNT,
   GIF_DEFAULT_FRAME_PADDING,
+  GIF_GRID_CUSTOM_SIZE,
   GIF_MAX_FRAME_PADDING,
   GIF_MAX_REF_IMAGES,
   getDefaultGifModelId,
@@ -42,6 +48,7 @@ import { MAX_UPLOAD_SIZE_BYTES } from '@/lib/constants';
 import { useGifWorkflow } from '@/hooks/useGifWorkflow';
 import type { ImageActionPayload } from '@/lib/image-actions';
 import { getDefaultConfiguredTextModel } from '@/lib/model-endpoints';
+import { getAmoTokenToken, loadRegistry } from '@/lib/nova-models';
 
 interface GifGenerationWorkspaceProps {
   wideMode?: boolean;
@@ -52,6 +59,20 @@ interface GifGenerationWorkspaceProps {
 }
 
 const SETTINGS_KEY = 'nova-gif-settings';
+
+function subscribeAmoTokenRegistry(onChange: () => void): () => void {
+  if (typeof window === 'undefined') return () => undefined;
+  window.addEventListener('nova-model-registry-updated', onChange);
+  window.addEventListener('storage', onChange);
+  return () => {
+    window.removeEventListener('nova-model-registry-updated', onChange);
+    window.removeEventListener('storage', onChange);
+  };
+}
+
+function getAmoTokenRegistrySnapshot(): string {
+  return typeof window === 'undefined' ? '' : getAmoTokenToken();
+}
 
 interface PersistedSettings {
   model: GifModel;
@@ -67,7 +88,14 @@ interface PersistedSettings {
 
 export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigureApiKey, onError, showToast }: GifGenerationWorkspaceProps) {
   const workflow = useGifWorkflow();
-  const gifModelOptions = useMemo(() => getGifCompatibleModels(), []);
+  const amoToken = useSyncExternalStore(
+    subscribeAmoTokenRegistry,
+    getAmoTokenRegistrySnapshot,
+    () => '',
+  );
+  const gifModelOptions = useMemo(() => (
+    amoToken ? getGifCompatibleModels(loadRegistry()) : []
+  ), [amoToken]);
 
   const [prompt, setPrompt] = useState('');
   const [model, setModel] = useState<GifModel>(getDefaultGifModelId());
@@ -82,6 +110,9 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
   const [isDragOver, setIsDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [settingsReady, setSettingsReady] = useState(false);
+  const [gridQuote, setGridQuote] = useState<AmoTokenImageQuote | null>(null);
+  const [quoteStatus, setQuoteStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [quoteMessage, setQuoteMessage] = useState('');
 
   const [modelPopoverOpen, setModelPopoverOpen] = useState(false);
   const [overwriteOpen, setOverwriteOpen] = useState(false);
@@ -97,6 +128,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
   const [refreshCooldownEnd, setRefreshCooldownEnd] = useState(0);
   const [refreshCooldownActive, setRefreshCooldownActive] = useState(false);
   const dropRef = useRef<HTMLDivElement>(null);
+  const quoteRequestIdRef = useRef(0);
 
   // 提示词优化
   const [optimizeOpen, setOptimizeOpen] = useState(false);
@@ -104,6 +136,16 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
   const [optimizing, setOptimizing] = useState(false);
   const [optimizeError, setOptimizeError] = useState<string | null>(null);
   const optimizeHandleRef = useRef<StreamPromptOptimizeHandle | null>(null);
+
+  useEffect(() => {
+    if (gifModelOptions.some(option => option.value === model)) return;
+    const nextModel = gifModelOptions[0]?.value || '';
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) setModel(nextModel);
+    });
+    return () => { cancelled = true; };
+  }, [gifModelOptions, model]);
 
   const handleOptimize = useCallback(() => {
     const textModel = getDefaultConfiguredTextModel('promptOptimize');
@@ -197,6 +239,63 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
       gptImageBackground: gptImageAdvancedParams.background,
     });
   }, [model, loop, closedLoop, frameDelayMs, loopCount, framePadding, gptImageAdvancedParams, settingsReady]);
+
+  useEffect(() => {
+    const requestId = ++quoteRequestIdRef.current;
+
+    const setInitialQuoteState = (
+      status: 'idle' | 'loading' | 'error',
+      message: string,
+    ) => {
+      queueMicrotask(() => {
+        if (quoteRequestIdRef.current !== requestId) return;
+        setGridQuote(null);
+        setQuoteStatus(status);
+        setQuoteMessage(message);
+      });
+    };
+
+    if (!hasApiKey) {
+      setInitialQuoteState('idle', '粘贴令牌后显示实时价格');
+      return;
+    }
+    if (!model) {
+      setInitialQuoteState('error', '当前没有可用的 2K 动图模型');
+      return;
+    }
+
+    let provider;
+    try {
+      provider = resolveImageTaskProvider(model);
+    } catch {
+      setInitialQuoteState('error', '当前模型配置不可用');
+      return;
+    }
+
+    setInitialQuoteState('loading', '正在读取实时价格…');
+    const timer = window.setTimeout(() => {
+      void fetchAmoTokenImageQuote(provider.apiKey, {
+        model: provider.modelId,
+        mode: 'edit',
+        size: GIF_GRID_CUSTOM_SIZE,
+        quality: gptImageAdvancedParams.quality,
+        count: 1,
+        referenceImageCount: 1 + refFiles.length,
+      }).then(nextQuote => {
+        if (quoteRequestIdRef.current !== requestId) return;
+        setGridQuote(nextQuote);
+        setQuoteStatus('ready');
+        setQuoteMessage('');
+      }).catch(error => {
+        if (quoteRequestIdRef.current !== requestId) return;
+        setGridQuote(null);
+        setQuoteStatus('error');
+        setQuoteMessage(error instanceof Error ? error.message : '暂时无法获取动图价格');
+      });
+    }, 200);
+
+    return () => window.clearTimeout(timer);
+  }, [amoToken, gptImageAdvancedParams.quality, hasApiKey, model, refFiles.length]);
 
   useEffect(() => {
     if (!workflow.startedAt || (workflow.job?.status !== 'generating_grid' && workflow.job?.status !== 'generating_gif')) {
@@ -410,7 +509,12 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
     }
   }, [workflow]);
 
-  const canSubmit = prompt.trim().length > 0 && !generating && hasApiKey && gifModelOptions.length > 0;
+  const canSubmit = prompt.trim().length > 0
+    && !generating
+    && hasApiKey
+    && gifModelOptions.length > 0
+    && quoteStatus === 'ready'
+    && Boolean(gridQuote);
   const refImageCount = refFiles.length;
   const maxedOut = refImageCount >= GIF_MAX_REF_IMAGES;
 
@@ -436,12 +540,9 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
     };
   }, [workflow.gridImageUrl, workflow.job]);
 
-  const gridCostEstimate = useMemo(() => estimateImageCost({
-    mode: 'image-to-image',
-    outputSize: '2K',
-    count: 1,
-    referenceImageCount: 1 + refFiles.length,
-  }), [refFiles.length]);
+  const gridQuoteLabel = gridQuote
+    ? formatAmoTokenImageQuote(gridQuote)
+    : quoteMessage || (quoteStatus === 'loading' ? '正在读取实时价格…' : '实时价格暂不可用');
 
   return (
     <div ref={dropRef} className="space-y-4">
@@ -519,11 +620,10 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
 
       <p className="text-xs text-muted-foreground leading-relaxed">
         系统会自动把生成网格图并切片为GIF，搭配你填写的主题与可选的参考图，生成 3×4 = 12 帧的网格底图，再在本地切片合成 GIF。
-        网格图分辨率固定为 3264×2448（单帧 816×816 正方形），仅显示支持 4K 自定义分辨率的 image 系列模型。
-        banana 系列不支持当前动图网格所需的自定义分辨率，因此这里不提供选择。
+        网格图分辨率固定为 2048×1536（单帧 512×512 正方形），仅显示支持该 2K 编辑规格的图片模型。
       </p>
       <p className="text-xs text-muted-foreground leading-relaxed">
-        预估费用：网格图生成 {formatCostEstimate(gridCostEstimate)}；GIF 合成在浏览器本地完成，不额外扣费；实际以爱词元记录为准。
+        网格图价格：{gridQuoteLabel}；GIF 合成在浏览器本地完成，不额外扣费；实际以爱词元记录为准。
       </p>
 
       {previewOpen && workflow.gridImageUrl && createPortal(

@@ -17,6 +17,7 @@ import {
   GIF_GRID_ASPECT_RATIO,
   GIF_GRID_CUSTOM_SIZE,
   GIF_GRID_OUTPUT_SIZE,
+  GIF_MAX_REF_IMAGES,
   loadActiveGifJob,
   loadGifTemplate,
   saveActiveGifJob,
@@ -25,6 +26,7 @@ import {
 } from '@/lib/gif-job-store';
 import { buildGifPrompt } from '@/lib/gif-prompt';
 import { encodeGifFromGrid, encodeFramesToGif, triggerGifDownload } from '@/lib/gif-encoder';
+import { fetchAmoTokenImageQuote } from '@/lib/amotoken-image-quote';
 import {
   getGptImageAdvancedParamsForModel,
   type GptImageBackground,
@@ -298,7 +300,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
     setGifBlob(null);
 
     const template = await loadGifTemplate();
-    const refsForSubmit = input.refImages.slice(0, 6);
+    const refsForSubmit = input.refImages.slice(0, GIF_MAX_REF_IMAGES);
     const advancedParams = getGptImageAdvancedParamsForModel(input.model, {
       quality: input.gptImageQuality,
       style: input.gptImageStyle,
@@ -334,7 +336,15 @@ export function useGifWorkflow(): UseGifWorkflowResult {
     void cleanupJobAssets(previousJob);
 
     try {
-      // TODO: 从模型注册表读取实际的 baseUrl 和 protocol
+      const imageReferences = buildImageReferences(template, refsForSubmit);
+      const imageQuote = await fetchAmoTokenImageQuote(provider.apiKey, {
+        model: provider.modelId,
+        mode: 'edit',
+        size: GIF_GRID_CUSTOM_SIZE,
+        quality: advancedParams.quality,
+        count: 1,
+        referenceImageCount: imageReferences.length,
+      });
       const serverTaskId = await createNovaTask({
         apiKey: provider.apiKey,
         baseUrl: provider.baseUrl,
@@ -350,7 +360,8 @@ export function useGifWorkflow(): UseGifWorkflowResult {
         gptImageStyle: advancedParams.style,
         gptImageBackground: advancedParams.background,
         parallelCount: 1,
-        images: buildImageReferences(template, refsForSubmit),
+        images: imageReferences,
+        imageQuote,
       });
 
       const withTaskId: ActiveGifJob = { ...next, serverTaskId, updatedAt: nowIso() };

@@ -1,13 +1,21 @@
+import {
+  GIF_FRAME_HEIGHT,
+  GIF_FRAME_WIDTH,
+  GIF_GRID_COLS,
+  GIF_GRID_CUSTOM_SIZE,
+  GIF_GRID_ROWS,
+} from '@/lib/gif-job-store';
+
 const STRUCTURE_PREFIX = `Create a strict animation sprite sheet, not a labeled contact sheet.
 
-Canvas: exactly 3264x2448 pixels.
-Grid: exactly 4 columns and 3 rows, 12 panels total.
-Each panel: exactly 816x816 pixels, square, edge-to-edge.
+Canvas: exactly ${GIF_GRID_CUSTOM_SIZE} pixels.
+Grid: exactly ${GIF_GRID_COLS} columns and ${GIF_GRID_ROWS} rows, 12 panels total.
+Each panel: exactly ${GIF_FRAME_WIDTH}x${GIF_FRAME_HEIGHT} pixels, square, edge-to-edge.
 Panel order: left to right, top to bottom: row 1 = frames 1-4, row 2 = frames 5-8, row 3 = frames 9-12.
 
 The grid must fill the entire canvas. No outer margin, no gutters, no spacing between panels, no rounded panels, no borders, no separators, no labels, no frame numbers, no text, no watermark, no annotations.
 Each panel contains exactly one frame of the same animation sequence.
-Keep the subject fully inside each 816x816 panel and centered on a stable anchor point.`;
+Keep the subject fully inside each ${GIF_FRAME_WIDTH}x${GIF_FRAME_HEIGHT} panel and centered on a stable anchor point.`;
 
 const TEMPLATE_LOGIC =
   'The first uploaded image is a layout template only: use it strictly to determine the 4x3 panel boundaries and panel sizes. Do not copy any visible guide lines, grid strokes, labels, numbers, colors, borders, frames, watermarks, or any other template artifacts into the final image.';

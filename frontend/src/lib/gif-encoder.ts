@@ -56,7 +56,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 /**
- * 固定切割：网格图分辨率受严格约束（3264×2448，4×3），直接按行列等分即可。
+ * 固定切割：网格图分辨率受严格约束（2048×1536，4×3），直接按行列等分即可。
  * paddingPercent 从每格四周等比例内缩，去掉模型可能渗到边缘的少量噪声。
  */
 function computeFixedFrameSources(

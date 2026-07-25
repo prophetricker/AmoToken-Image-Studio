@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { CANDIDATE_MODES_STORAGE_KEY } from '@/lib/candidate-capabilities';
-import { getDefaultGifModelId, getGifCompatibleModels } from '@/lib/gif-job-store';
+import {
+  GIF_FRAME_HEIGHT,
+  GIF_FRAME_WIDTH,
+  GIF_GRID_CUSTOM_SIZE,
+  GIF_GRID_OUTPUT_SIZE,
+  GIF_MAX_REF_IMAGES,
+  getDefaultGifModelId,
+  getGifCompatibleModels,
+} from '@/lib/gif-job-store';
 import { resolveImageTaskProvider } from '@/lib/ccode-task-client';
 import {
   AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID,
@@ -22,30 +29,29 @@ beforeEach(() => {
   });
 });
 
-describe('GIF gray-test model selection', () => {
-  it('does not expose a GIF model when only the stable 2K AmoToken model is available', () => {
-    saveAmoTokenToken('sk-live-token');
-
-    expect(getGifCompatibleModels()).toEqual([]);
-    expect(getDefaultGifModelId()).toBe('');
+describe('GIF full-release product constraints', () => {
+  it('uses a catalog-compatible 2K grid with twelve 512px frames and three user references', () => {
+    expect(GIF_GRID_OUTPUT_SIZE).toBe('2K');
+    expect(GIF_GRID_CUSTOM_SIZE).toBe('2048x1536');
+    expect(GIF_FRAME_WIDTH).toBe(512);
+    expect(GIF_FRAME_HEIGHT).toBe(512);
+    expect(GIF_MAX_REF_IMAGES).toBe(3);
   });
 
-  it('exposes the runtime-only 4K AmoToken model for GIF when candidate modes are enabled', () => {
+  it('exposes the normal AmoToken model when its stable 2K configuration is available', () => {
     saveAmoTokenToken('sk-live-token');
-    localStorage.setItem(CANDIDATE_MODES_STORAGE_KEY, 'enabled');
 
     expect(getGifCompatibleModels()).toEqual([
       {
-        value: AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID,
-        label: 'AmoToken GPT Image 2 4K 灰测',
+        value: AMOTOKEN_IMAGE_MODEL_ID,
+        label: 'AmoToken GPT Image 2',
       },
     ]);
-    expect(getDefaultGifModelId()).toBe(AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID);
+    expect(getDefaultGifModelId()).toBe(AMOTOKEN_IMAGE_MODEL_ID);
   });
 
   it('routes the 4K gray-test model through the same AmoToken image model id', () => {
     saveAmoTokenToken('sk-live-token');
-    localStorage.setItem(CANDIDATE_MODES_STORAGE_KEY, 'enabled');
 
     expect(resolveImageTaskProvider(AMOTOKEN_IMAGE_MODEL_4K_GRAY_ID)).toMatchObject({
       apiKey: 'sk-live-token',

@@ -5,7 +5,7 @@ export const CANDIDATE_MODES_QUERY_PARAM = 'novaCandidateModes';
 export const CANDIDATE_MODES_STORAGE_KEY = 'nova-candidate-modes';
 
 function hasBuildTimeCandidateSwitch(): boolean {
-  return process.env.NEXT_PUBLIC_NOVA_CANDIDATE_MODES === '1';
+  return process.env.NEXT_PUBLIC_NOVA_CANDIDATE_MODES !== '0';
 }
 
 export function isCandidateModesEnabled(): boolean {
@@ -45,8 +45,6 @@ function getCandidateModesQueryValue(): string | null {
 }
 
 export function resolveCandidateModesEnabled(): boolean {
-  if (hasBuildTimeCandidateSwitch()) return true;
-
   const queryValue = getCandidateModesQueryValue();
   if (queryValue === '1' || queryValue === 'true' || queryValue === 'enabled') {
     setCandidateModesPreference('enabled');
@@ -57,5 +55,8 @@ export function resolveCandidateModesEnabled(): boolean {
     return false;
   }
 
-  return getCandidateModesPreference() === 'enabled';
+  const preference = getCandidateModesPreference();
+  if (preference) return preference === 'enabled';
+
+  return hasBuildTimeCandidateSwitch();
 }
