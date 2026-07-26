@@ -74,11 +74,21 @@ test('defines exactly eight enabled prompt gallery sources with stable fetch met
     for (const document of source.documents) {
       assert.ok(document.name, source.id);
       assert.match(document.directUrl, /^https:\/\/raw\.githubusercontent\.com\//, source.id);
-      assert.equal(document.proxyUrl, `https://proxy.ccode.vip/${document.directUrl}`, source.id);
+      assert.match(
+        document.proxyUrl,
+        /^https:\/\/proxy\.ccode\.vip\/https\/raw\.githubusercontent\.com\//,
+        source.id,
+      );
     }
   }
 
   assert.doesNotMatch(JSON.stringify(PROMPT_GALLERY_SOURCES), /EvoLinkAI/i);
+
+  const wuyoscar = PROMPT_GALLERY_SOURCES.find(source => source.id === 'wuyoscar-gpt-image2');
+  assert.equal(
+    wuyoscar.documents[0].proxyUrl,
+    'https://proxy.ccode.vip/https/raw.githubusercontent.com/wuyoscar/GPT-Image2-Skill/main/README.zh.md',
+  );
 });
 
 test('marks both new prompt sources as MIT licensed', () => {
@@ -127,6 +137,181 @@ test('pairs labeled Wuyoscar prompts with corresponding repository images', () =
     '像素艺术汽车精灵图集',
     '像素艺术早餐静物',
   ]);
+  assert.deepEqual(prompts.map(prompt => prompt.images[0]), [
+    'https://raw.githubusercontent.com/wuyoscar/GPT-Image2-Skill/main/docs/pixel-art/cars.png',
+    'https://raw.githubusercontent.com/wuyoscar/GPT-Image2-Skill/main/docs/pixel-art/breakfast.png',
+  ]);
+});
+
+test('keeps record keys stable across insertion and reordering while resolving duplicate native ids', () => {
+  const source = PROMPT_GALLERY_SOURCES.find(candidate => candidate.id === 'nanobanana');
+  const originalRecords = [
+    {
+      id: 'stable-id',
+      title: '原始海报',
+      content: '创建一张稳定标识的海报。',
+      images: ['https://images.example.com/original.png'],
+      tags: ['海报'],
+    },
+    {
+      id: 'duplicate-id',
+      title: '重复编号甲',
+      content: '第一条使用重复来源编号。',
+      images: ['https://images.example.com/duplicate-a.png'],
+      tags: [],
+    },
+    {
+      id: 'duplicate-id',
+      title: '重复编号乙',
+      content: '第二条使用重复来源编号。',
+      images: ['https://images.example.com/duplicate-b.png'],
+      tags: [],
+    },
+  ];
+  const makeDocument = records => [{
+    name: 'public/data.json',
+    content: JSON.stringify({ sections: [{ id: 'fixture', prompts: records }] }),
+  }];
+
+  const before = parseSourceDocuments(source, makeDocument(originalRecords));
+  const after = parseSourceDocuments(source, makeDocument([
+    {
+      id: 'inserted-id',
+      title: '前插记录',
+      content: '插入到原始文档最前面的新记录。',
+      images: ['https://images.example.com/inserted.png'],
+      tags: [],
+    },
+    originalRecords[2],
+    originalRecords[0],
+    originalRecords[1],
+  ]));
+
+  const beforeKeys = Object.fromEntries(before.map(prompt => [prompt.title, prompt.uniqueKey]));
+  const afterKeys = Object.fromEntries(after.map(prompt => [prompt.title, prompt.uniqueKey]));
+  for (const record of originalRecords) {
+    assert.equal(afterKeys[record.title], beforeKeys[record.title], record.title);
+  }
+  assert.equal(new Set(after.map(prompt => prompt.id)).size, after.length);
+  assert.equal(new Set(after.map(prompt => prompt.uniqueKey)).size, after.length);
+
+  const markdownSource = PROMPT_GALLERY_SOURCES.find(
+    candidate => candidate.id === 'awesome-gpt-image',
+  );
+  const markdownRecord = (title, content, image) => [
+    `### ${title}`,
+    '',
+    `![${title}](${image})`,
+    '',
+    '**提示词：**',
+    '```text',
+    content,
+    '```',
+  ].join('\n');
+  const originalMarkdown = [
+    '## 稳定性',
+    markdownRecord('无原生编号甲', '生成第一张无原生编号图片。', './assets/no-id-a.png'),
+    markdownRecord('无原生编号乙', '生成第二张无原生编号图片。', './assets/no-id-b.png'),
+  ].join('\n\n');
+  const reorderedMarkdown = [
+    '## 稳定性',
+    markdownRecord('新插入记录', '生成前插图片。', './assets/inserted.png'),
+    markdownRecord('无原生编号乙', '生成第二张无原生编号图片。', './assets/no-id-b.png'),
+    markdownRecord('无原生编号甲', '生成第一张无原生编号图片。', './assets/no-id-a.png'),
+  ].join('\n\n');
+  const markdownBefore = parseSourceDocuments(markdownSource, [
+    { name: 'README.zh-CN.md', content: originalMarkdown },
+  ]);
+  const markdownAfter = parseSourceDocuments(markdownSource, [
+    { name: 'README.zh-CN.md', content: reorderedMarkdown },
+  ]);
+  const markdownBeforeKeys = Object.fromEntries(
+    markdownBefore.map(prompt => [prompt.title, prompt.uniqueKey]),
+  );
+  const markdownAfterKeys = Object.fromEntries(
+    markdownAfter.map(prompt => [prompt.title, prompt.uniqueKey]),
+  );
+
+  assert.equal(markdownAfterKeys['无原生编号甲'], markdownBeforeKeys['无原生编号甲']);
+  assert.equal(markdownAfterKeys['无原生编号乙'], markdownBeforeKeys['无原生编号乙']);
+  assert.equal(new Set(markdownAfter.map(prompt => prompt.uniqueKey)).size, markdownAfter.length);
+});
+
+test('filters incomplete records and invalid image URLs from partially damaged CRLF input', () => {
+  const source = PROMPT_GALLERY_SOURCES.find(candidate => candidate.id === 'awesome-gpt-image');
+  const markdown = [
+    '## 海报与广告',
+    '',
+    '### 完整记录',
+    '',
+    '![完整图片](./assets/valid.png)',
+    '',
+    '**提示词：**',
+    '```text',
+    '创建一张有效海报。',
+    '```',
+    '',
+    '### 缺少图片',
+    '',
+    '**提示词：**',
+    '```text',
+    '这条记录不能发布。',
+    '```',
+    '',
+    '### 无效图片',
+    '',
+    '![无效图片](javascript:alert(1))',
+    '',
+    '**提示词：**',
+    '```text',
+    '这条记录也不能发布。',
+    '```',
+    '',
+    '### 空提示词',
+    '',
+    '![空提示词](./assets/empty.png)',
+    '',
+    '**提示词：**',
+    '```text',
+    '   ',
+    '```',
+  ].join('\r\n');
+
+  const prompts = parseSourceDocuments(source, [{ name: 'README.zh-CN.md', content: markdown }]);
+
+  assert.deepEqual(prompts.map(prompt => prompt.title), ['完整记录']);
+  assert.deepEqual(prompts[0].images, [
+    'https://raw.githubusercontent.com/ZeroLu/awesome-gpt-image/main/assets/valid.png',
+  ]);
+});
+
+test('ignores decorative images before Wuyoscar gallery tables', () => {
+  const source = PROMPT_GALLERY_SOURCES.find(candidate => candidate.id === 'wuyoscar-gpt-image2');
+  const markdown = [
+    '#### 像素艺术 1x2 组图',
+    '',
+    '![章节装饰](docs/decorative.png)',
+    '',
+    '<table>',
+    '  <tr>',
+    '    <td><img src="docs/pixel-art/cars.png" alt="像素汽车" /></td>',
+    '    <td><img src="docs/pixel-art/breakfast.png" alt="像素早餐" /></td>',
+    '  </tr>',
+    '</table>',
+    '',
+    '**提示词 A - 像素汽车**',
+    '```text',
+    '生成像素汽车。',
+    '```',
+    '',
+    '**提示词 B - 像素早餐**',
+    '```text',
+    '生成像素早餐。',
+    '```',
+  ].join('\r\n');
+
+  const prompts = parseSourceDocuments(source, [{ name: 'README.zh.md', content: markdown }]);
+
   assert.deepEqual(prompts.map(prompt => prompt.images[0]), [
     'https://raw.githubusercontent.com/wuyoscar/GPT-Image2-Skill/main/docs/pixel-art/cars.png',
     'https://raw.githubusercontent.com/wuyoscar/GPT-Image2-Skill/main/docs/pixel-art/breakfast.png',

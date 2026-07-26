@@ -1,3 +1,5 @@
+const { createHash } = require('node:crypto');
+
 function splitBeforeHeading(markdown, prefix) {
   const blocks = [];
   let current = [];
@@ -27,11 +29,25 @@ function cleanMarkdownTitle(value) {
 function absolutizeSourceImage(rawBaseUrl, value) {
   const image = String(value || '').trim();
   if (!image) return '';
-  if (/^https?:\/\//i.test(image)) return image;
-  if (image.startsWith('//')) return `https:${image}`;
+  if (/^https?:\/\//i.test(image)) return isValidHttpImage(image) ? image : '';
+  if (/^[a-z][a-z\d+.-]*:/i.test(image)) return '';
+  if (image.startsWith('//')) {
+    const absoluteImage = `https:${image}`;
+    return isValidHttpImage(absoluteImage) ? absoluteImage : '';
+  }
   const base = String(rawBaseUrl || '').replace(/\/+$/, '');
   if (!base) return image;
-  return `${base}/${image.replace(/^(?:\.\/|\/)+/, '')}`;
+  const absoluteImage = `${base}/${image.replace(/^(?:\.\/|\/)+/, '')}`;
+  return isValidHttpImage(absoluteImage) ? absoluteImage : '';
+}
+
+function isValidHttpImage(value) {
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'http:' || url.protocol === 'https:') && Boolean(url.hostname);
+  } catch {
+    return false;
+  }
 }
 
 function extractImageEntries(rawBaseUrl, block) {
@@ -99,14 +115,31 @@ function inferPromptCategory(title, content, tags = []) {
   return '其他';
 }
 
-function createPrompt(source, index, values) {
+function normalizeIdentityValue(value) {
+  return String(value || '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function createIdentityHash(title, content, images) {
+  const identity = JSON.stringify([
+    normalizeIdentityValue(title),
+    normalizeIdentityValue(content),
+    images.map(normalizeIdentityValue).sort(),
+  ]);
+  return createHash('sha256').update(identity).digest('hex').slice(0, 20);
+}
+
+function createPrompt(source, values) {
   const tags = Array.isArray(values.tags) ? values.tags.filter(Boolean) : [];
-  const images = Array.isArray(values.images) ? values.images.filter(Boolean) : [];
-  const id = String(values.id || `${source.id}-${index}`);
+  const images = Array.from(new Set(
+    (Array.isArray(values.images) ? values.images : [])
+      .map(image => String(image || '').trim())
+      .filter(isValidHttpImage),
+  ));
+  const title = String(values.title || '').trim();
+  const content = String(values.content || '').trim();
   return {
-    id,
-    title: String(values.title || '').trim(),
-    content: String(values.content || '').trim(),
+    title,
+    content,
     images,
     tags,
     contributor: String(values.contributor || ''),
@@ -114,8 +147,41 @@ function createPrompt(source, index, values) {
     source: source.id,
     sourceUrl: source.sourceUrl,
     category: values.category || inferPromptCategory(values.title, values.content, tags),
-    uniqueKey: values.uniqueKey || `${source.id}-${index}`,
+    nativeId: String(values.nativeId || values.id || '').trim(),
+    identityHash: createIdentityHash(title, content, images),
   };
+}
+
+function finalizePrompts(source, candidates) {
+  const validCandidates = candidates.filter(candidate => (
+    candidate.title && candidate.content && candidate.images.length > 0
+  ));
+  const deduplicated = [];
+  const seenRecords = new Set();
+  for (const candidate of validCandidates) {
+    const recordKey = `${candidate.nativeId}\0${candidate.identityHash}`;
+    if (seenRecords.has(recordKey)) continue;
+    seenRecords.add(recordKey);
+    deduplicated.push(candidate);
+  }
+
+  const nativeIdCounts = new Map();
+  for (const candidate of deduplicated) {
+    if (!candidate.nativeId) continue;
+    nativeIdCounts.set(candidate.nativeId, (nativeIdCounts.get(candidate.nativeId) || 0) + 1);
+  }
+
+  return deduplicated.map(({ nativeId, identityHash, ...candidate }) => {
+    const encodedNativeId = encodeURIComponent(nativeId);
+    const stableId = nativeId
+      ? `${source.id}-${encodedNativeId}${nativeIdCounts.get(nativeId) > 1 ? `-${identityHash}` : ''}`
+      : `${source.id}-${identityHash}`;
+    return {
+      id: stableId,
+      ...candidate,
+      uniqueKey: stableId,
+    };
+  });
 }
 
 function documentContents(documents) {
@@ -134,16 +200,15 @@ function parseNanobanana(source, raw) {
   const data = JSON.parse(raw);
   const prompts = [];
   if (!Array.isArray(data?.sections)) return prompts;
-  data.sections.forEach((section, sectionIndex) => {
+  data.sections.forEach((section) => {
     if (!Array.isArray(section?.prompts)) return;
-    section.prompts.forEach((prompt, promptIndex) => {
-      const index = prompts.length;
-      prompts.push(createPrompt(source, index, {
+    section.prompts.forEach((prompt) => {
+      prompts.push(createPrompt(source, {
         ...prompt,
+        nativeId: prompt.id,
         images: Array.isArray(prompt.images)
           ? prompt.images.map(image => absolutizeSourceImage(source.rawBaseUrl, image))
           : [],
-        uniqueKey: `${source.id}-${section.id || sectionIndex}-${prompt.id || promptIndex}-${sectionIndex}-${promptIndex}`,
       }));
     });
   });
@@ -161,7 +226,7 @@ function parseMarkdownAwesome(source, markdown) {
         /\*\*提示词[:：]\*\*\s*\r?\n\s*```[\w-]*\r?\n([\s\S]*?)\r?\n```/,
       );
       if (!title || !content) continue;
-      prompts.push(createPrompt(source, prompts.length, {
+      prompts.push(createPrompt(source, {
         title,
         content,
         images: extractMarkdownImages(source.rawBaseUrl, block),
@@ -178,7 +243,7 @@ function parseMarkdownGpt4o(source, markdown) {
     const title = cleanMarkdownTitle(firstMatch(block, /^###\s+(.+)$/m));
     const content = firstMatch(block, /-\s*\*\*提示词文本[:：]\*\*\s*`([\s\S]*?)`/);
     if (!title || !content) continue;
-    prompts.push(createPrompt(source, prompts.length, {
+    prompts.push(createPrompt(source, {
       title,
       content,
       images: extractMarkdownImages(source.rawBaseUrl, block),
@@ -199,7 +264,7 @@ function parseMarkdownYouMind(source, markdown) {
     );
     if (!title || !content) continue;
     const tags = youMindTags(title, source.modelTag || '');
-    prompts.push(createPrompt(source, prompts.length, {
+    prompts.push(createPrompt(source, {
       title,
       content,
       images: extractMarkdownImages(source.rawBaseUrl, block),
@@ -220,8 +285,8 @@ function parseDavidWu(source, raw) {
     const tags = [item.category_cn, item.category, item.author, item.source];
     if (item.needs_ref) tags.push('需要参考图');
     const image = absolutizeSourceImage(source.rawBaseUrl, item.image);
-    prompts.push(createPrompt(source, prompts.length, {
-      id: `${source.id}-${item.id || prompts.length}`,
+    prompts.push(createPrompt(source, {
+      nativeId: item.id,
       title,
       content,
       images: image ? [image] : [],
@@ -250,7 +315,7 @@ function parseZeroLu(source, markdown) {
         const heading = stripNumberedHeading(firstMatch(block, /^###\s+(.+)$/m));
         const title = heading || image?.alt;
         if (!title || !image?.image || !match[1].trim()) continue;
-        prompts.push(createPrompt(source, prompts.length, {
+        prompts.push(createPrompt(source, {
           title,
           content: match[1],
           images: [image.image],
@@ -279,7 +344,11 @@ function labeledWuyoscarPrompts(block) {
 function parseWuyoscar(source, markdown) {
   const prompts = [];
   for (const block of splitBeforeHeading(markdown, '#### ')) {
-    const images = extractImageEntries(source.rawBaseUrl, block);
+    const tableMarkup = block.match(/<table\b[\s\S]*?<\/table>/gi)?.join('\n') || '';
+    const tableImages = extractImageEntries(source.rawBaseUrl, tableMarkup);
+    const images = tableImages.length > 0
+      ? tableImages
+      : extractImageEntries(source.rawBaseUrl, block);
     if (images.length === 0) continue;
     const heading = cleanMarkdownTitle(firstMatch(block, /^####\s+(.+)$/m));
     const labeledPrompts = labeledWuyoscarPrompts(block);
@@ -289,7 +358,7 @@ function parseWuyoscar(source, markdown) {
         const labeledIndex = prompt.label ? prompt.label.charCodeAt(0) - 65 : promptIndex;
         const image = images[labeledIndex] || images[promptIndex];
         if (!image || !prompt.content) return;
-        prompts.push(createPrompt(source, prompts.length, {
+        prompts.push(createPrompt(source, {
           title: prompt.title || image.alt || heading,
           content: prompt.content,
           images: [image.image],
@@ -304,7 +373,7 @@ function parseWuyoscar(source, markdown) {
       /<summary>[^\n]*提示词[^\n]*<\/summary>\s*\r?\n\s*```[\w-]*\r?\n([\s\S]*?)\r?\n```/i,
     );
     if (heading && content) {
-      prompts.push(createPrompt(source, prompts.length, {
+      prompts.push(createPrompt(source, {
         title: heading,
         content,
         images: [images[0].image],
@@ -319,24 +388,33 @@ function parseSourceDocuments(source, documents) {
   const contents = documentContents(documents);
   const first = contents[0] || '';
   const markdown = contents.join('\n\n');
+  let prompts;
   switch (source?.parser) {
     case 'nanobanana-json':
-      return parseNanobanana(source, first);
+      prompts = parseNanobanana(source, first);
+      break;
     case 'markdown-awesome':
-      return parseMarkdownAwesome(source, markdown);
+      prompts = parseMarkdownAwesome(source, markdown);
+      break;
     case 'markdown-gpt4o':
-      return parseMarkdownGpt4o(source, markdown);
+      prompts = parseMarkdownGpt4o(source, markdown);
+      break;
     case 'markdown-youmind':
-      return parseMarkdownYouMind(source, markdown);
+      prompts = parseMarkdownYouMind(source, markdown);
+      break;
     case 'davidwu-json':
-      return parseDavidWu(source, first);
+      prompts = parseDavidWu(source, first);
+      break;
     case 'zerolu-markdown':
-      return parseZeroLu(source, markdown);
+      prompts = parseZeroLu(source, markdown);
+      break;
     case 'wuyoscar-markdown':
-      return parseWuyoscar(source, markdown);
+      prompts = parseWuyoscar(source, markdown);
+      break;
     default:
       return [];
   }
+  return finalizePrompts(source, prompts);
 }
 
 module.exports = {

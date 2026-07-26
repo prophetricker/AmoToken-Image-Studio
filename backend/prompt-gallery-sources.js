@@ -1,12 +1,12 @@
 const RAW_GITHUB_BASE = 'https://raw.githubusercontent.com';
-const RAW_GITHUB_PROXY = 'https://proxy.ccode.vip/';
+const RAW_GITHUB_PROXY = 'https://proxy.ccode.vip/https/';
 
 function sourceDocument(owner, repository, name) {
   const directUrl = `${RAW_GITHUB_BASE}/${owner}/${repository}/main/${name}`;
   return {
     name,
     directUrl,
-    proxyUrl: `${RAW_GITHUB_PROXY}${directUrl}`,
+    proxyUrl: `${RAW_GITHUB_PROXY}${directUrl.replace(/^https:\/\//, '')}`,
   };
 }
 
