@@ -34,6 +34,7 @@ function hasExplicitPortInAuthority(value) {
 function normalizePromptImageUrl(rawUrl) {
   const value = String(rawUrl || '').trim();
   if (!value) return '';
+  if (!/^https:\/\//i.test(value)) return '';
   if (hasExplicitPortInAuthority(value)) return '';
 
   let parsed;

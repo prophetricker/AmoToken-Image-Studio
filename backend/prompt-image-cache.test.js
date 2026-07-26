@@ -25,10 +25,29 @@ test('allows only UUID-shaped GitHub user attachments on the exact GitHub host',
 test('keeps existing raw GitHub and ccode proxy image compatibility', () => {
   const raw = 'https://raw.githubusercontent.com/example/gallery/main/image.png';
   const proxied = 'https://proxy.ccode.vip/https/raw.githubusercontent.com/example/gallery/main/image.png';
+  const uppercaseProxy = 'HTTPS://proxy.ccode.vip/https/raw.githubusercontent.com/example/gallery/main/image.png';
 
   assert.equal(isAllowedPromptImageUrl(raw), true);
   assert.equal(isAllowedPromptImageUrl(proxied), true);
+  assert.equal(isAllowedPromptImageUrl('HTTPS://i.ibb.co/example/image.jpg'), true);
   assert.equal(normalizePromptImageUrl(proxied), raw);
+  assert.equal(normalizePromptImageUrl(uppercaseProxy), raw);
+});
+
+test('rejects non-canonical HTTPS spellings tolerated by WHATWG URL parsing', () => {
+  const nonCanonicalUrls = [
+    'https:i.ibb.co:443/a.jpg',
+    'https:i.ibb.co/a.jpg',
+    String.raw`https:\\i.ibb.co:443\a.jpg`,
+    String.raw`https:\\i.ibb.co\a.jpg`,
+    'https:proxy.ccode.vip:443/https/raw.githubusercontent.com/o/r/main/a.png',
+    'https:proxy.ccode.vip/https/raw.githubusercontent.com/o/r/main/a.png',
+  ];
+
+  for (const url of nonCanonicalUrls) {
+    assert.equal(normalizePromptImageUrl(url), '', url);
+    assert.equal(isAllowedPromptImageUrl(url), false, url);
+  }
 });
 
 test('rejects an HTTP ccode proxy URL before it can be rewritten as HTTPS', () => {
