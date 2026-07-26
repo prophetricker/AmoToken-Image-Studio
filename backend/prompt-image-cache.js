@@ -2,9 +2,11 @@ const { createHash } = require('crypto');
 const path = require('path');
 
 const RAW_GITHUB_HOST = 'raw.githubusercontent.com';
+const GITHUB_HOST = 'github.com';
 const CCODE_PROXY_HOST = 'proxy.ccode.vip';
 const ALLOWED_PROMPT_IMAGE_HOSTS = new Set([RAW_GITHUB_HOST]);
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
+const GITHUB_ATTACHMENT_PATH = /^\/user-attachments\/assets\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function normalizePromptImageUrl(rawUrl) {
   const value = String(rawUrl || '').trim();
@@ -44,6 +46,9 @@ function isAllowedPromptImageUrl(rawUrl) {
   }
 
   if (parsed.protocol !== 'https:') return false;
+  if (parsed.hostname === GITHUB_HOST) {
+    return GITHUB_ATTACHMENT_PATH.test(parsed.pathname);
+  }
   if (!ALLOWED_PROMPT_IMAGE_HOSTS.has(parsed.hostname)) return false;
 
   const ext = path.extname(parsed.pathname).toLowerCase();
@@ -57,10 +62,19 @@ function extensionFromUrlOrContentType(url, contentType = '') {
   } catch {
     // Fall through to content-type.
   }
-  if (/jpe?g/i.test(contentType)) return '.jpg';
-  if (/webp/i.test(contentType)) return '.webp';
-  if (/gif/i.test(contentType)) return '.gif';
-  return '.png';
+  const mimeType = String(contentType || '').split(';', 1)[0].trim().toLowerCase();
+  switch (mimeType) {
+    case 'image/jpeg':
+    case 'image/jpg':
+    case 'image/pjpeg':
+      return '.jpg';
+    case 'image/webp':
+      return '.webp';
+    case 'image/gif':
+      return '.gif';
+    default:
+      return '.png';
+  }
 }
 
 function getPromptImageCacheKey(rawUrl, contentType = '') {
