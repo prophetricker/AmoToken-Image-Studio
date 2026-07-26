@@ -34,19 +34,30 @@ export const PromptSelectDialog = memo(function PromptSelectDialog({
   const [selectedCategory, setSelectedCategory] = useState(ALL_CATEGORY);
   const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
   const loadMoreRef = useRef<HTMLDivElement>(null);
+  const requestGenerationRef = useRef(0);
 
   useEffect(() => {
     if (!open) return;
 
+    const generation = ++requestGenerationRef.current;
+    const controller = new AbortController();
     setLoading(true);
-    fetchPromptGallery()
+    fetchPromptGallery({ signal: controller.signal })
       .then((prompts) => {
+        if (requestGenerationRef.current !== generation) return;
         setAllPrompts(prompts);
-        setLoading(false);
       })
       .catch(() => {
-        setLoading(false);
+        // The compact dialog keeps its existing empty state on request failure.
+      })
+      .finally(() => {
+        if (requestGenerationRef.current === generation) setLoading(false);
       });
+
+    return () => {
+      controller.abort();
+      if (requestGenerationRef.current === generation) requestGenerationRef.current += 1;
+    };
   }, [open]);
 
   useEffect(() => {

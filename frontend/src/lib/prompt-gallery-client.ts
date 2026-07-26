@@ -38,15 +38,16 @@ function stringArray(value: unknown): string[] {
   return value.map(trimmedString).filter(Boolean);
 }
 
-function normalizePrompt(raw: unknown, index: number): PromptWithKey | null {
+function normalizePrompt(raw: unknown): PromptWithKey | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const item = raw as Record<string, unknown>;
+  const id = trimmedString(item.id);
+  const uniqueKey = trimmedString(item.uniqueKey);
   const title = trimmedString(item.title);
   const content = trimmedString(item.content);
   const images = stringArray(item.images);
-  if (!title || !content || images.length === 0) return null;
+  if (!id || !uniqueKey || !title || !content || images.length === 0) return null;
 
-  const id = trimmedString(item.id) || `prompt-${index}`;
   const source = trimmedString(item.source) || 'nova';
   return {
     id,
@@ -59,7 +60,7 @@ function normalizePrompt(raw: unknown, index: number): PromptWithKey | null {
     source,
     sourceUrl: trimmedString(item.sourceUrl),
     category: normalizePromptCategory(trimmedString(item.category)),
-    uniqueKey: trimmedString(item.uniqueKey) || `${source}-${id}-${index}`,
+    uniqueKey,
   };
 }
 
@@ -114,6 +115,8 @@ function normalizeMeta(raw: unknown): PromptGalleryMeta | null {
   }
   const sources = meta.sources.map(normalizeSourceMeta);
   if (sources.some(source => source === null)) return null;
+  const sourceIds = new Set(sources.map(source => source?.id));
+  if (sourceIds.size !== sources.length) return null;
   return {
     publishedCount: meta.publishedCount as number,
     refreshedAt,
@@ -122,19 +125,24 @@ function normalizeMeta(raw: unknown): PromptGalleryMeta | null {
   };
 }
 
-async function fetchJson(path: string): Promise<unknown> {
-  const response = await fetch(path, { cache: 'no-store' });
+async function fetchJson(path: string, signal?: AbortSignal): Promise<unknown> {
+  const requestOptions: RequestInit = { cache: 'no-store' };
+  if (signal) requestOptions.signal = signal;
+  const response = await fetch(path, requestOptions);
   if (!response.ok) throw new Error('request failed');
   return response.json();
 }
 
-export async function fetchPromptGallery(): Promise<PromptWithKey[]> {
+export async function fetchPromptGallery(options: { signal?: AbortSignal } = {}): Promise<PromptWithKey[]> {
   try {
-    const raw = await fetchJson('/api/nova/prompts');
+    const raw = await fetchJson('/api/nova/prompts', options.signal);
     if (!Array.isArray(raw) || raw.length === 0) throw new Error('invalid prompts');
-    const prompts = raw.map(normalizePrompt).filter((prompt): prompt is PromptWithKey => prompt !== null);
-    if (prompts.length === 0) throw new Error('invalid prompts');
-    return prompts;
+    const prompts = raw.map(normalizePrompt);
+    if (prompts.some(prompt => prompt === null)) throw new Error('invalid prompts');
+    const normalizedPrompts = prompts as PromptWithKey[];
+    const uniqueKeys = new Set(normalizedPrompts.map(prompt => prompt.uniqueKey));
+    if (uniqueKeys.size !== normalizedPrompts.length) throw new Error('duplicate prompt keys');
+    return normalizedPrompts;
   } catch {
     throw new Error(PROMPTS_ERROR);
   }

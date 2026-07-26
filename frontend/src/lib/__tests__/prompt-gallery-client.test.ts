@@ -92,6 +92,46 @@ describe('fetchPromptGallery', () => {
     await expect(rejection).rejects.not.toThrow(/secret|upstream|private service response/i);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it('rejects the entire response when one record is invalid', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([
+      validPrompt,
+      { ...validPrompt, uniqueKey: 'invalid-record', images: [] },
+    ])));
+
+    await expect(fetchPromptGallery()).rejects.toThrow('提示词广场暂不可用');
+  });
+
+  it.each([
+    ['id', { ...validPrompt, id: '' }],
+    ['uniqueKey', { ...validPrompt, uniqueKey: '' }],
+  ])('rejects records without required %s identity', async (_field, prompt) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([prompt])));
+
+    await expect(fetchPromptGallery()).rejects.toThrow('提示词广场暂不可用');
+  });
+
+  it('rejects duplicate prompt unique keys', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([
+      validPrompt,
+      { ...validPrompt, id: 'prompt-2' },
+    ])));
+
+    await expect(fetchPromptGallery()).rejects.toThrow('提示词广场暂不可用');
+  });
+
+  it('forwards an abort signal to the same-origin request', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response([validPrompt]));
+    vi.stubGlobal('fetch', fetchMock);
+    const controller = new AbortController();
+
+    await fetchPromptGallery({ signal: controller.signal });
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/nova/prompts', {
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+  });
 });
 
 describe('fetchPromptGalleryMeta', () => {
@@ -111,6 +151,15 @@ describe('fetchPromptGalleryMeta', () => {
     ['invalid timestamp', { ...validMeta, refreshedAt: 123 }, true],
   ])('rejects %s with a user-safe error', async (_name, body, ok) => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(body, ok)));
+
+    await expect(fetchPromptGalleryMeta()).rejects.toThrow('来源信息暂不可用');
+  });
+
+  it('rejects duplicate source ids', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({
+      ...validMeta,
+      sources: [validMeta.sources[0], { ...validMeta.sources[0], label: 'Duplicate source' }],
+    })));
 
     await expect(fetchPromptGalleryMeta()).rejects.toThrow('来源信息暂不可用');
   });

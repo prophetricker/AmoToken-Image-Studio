@@ -14,11 +14,8 @@ import {
   toPromptGalleryImageSrc,
   type PromptWithKey,
 } from "@/lib/prompt-gallery-data";
-import {
-  fetchPromptGallery,
-  fetchPromptGalleryMeta,
-  type PromptGalleryMeta,
-} from "@/lib/prompt-gallery-client";
+import type { PromptGalleryMeta } from "@/lib/prompt-gallery-client";
+import { promptGalleryCache } from "@/lib/prompt-gallery-cache";
 import { cn } from "@/lib/utils";
 
 type CanvasPromptGalleryImportDialogProps = {
@@ -30,23 +27,9 @@ type CanvasPromptGalleryImportDialogProps = {
 
 const PAGE_STEP = 40;
 
-let cachedPrompts: PromptWithKey[] | null = null;
-let cachedMeta: PromptGalleryMeta | null = null;
-
-async function loadPromptGalleryData() {
-  const [promptsResult, metaResult] = await Promise.allSettled([
-    cachedPrompts ? Promise.resolve(cachedPrompts) : fetchPromptGallery(),
-    cachedMeta ? Promise.resolve(cachedMeta) : fetchPromptGalleryMeta(),
-  ]);
-  if (promptsResult.status === "rejected") throw promptsResult.reason;
-  cachedPrompts = promptsResult.value;
-  if (metaResult.status === "fulfilled") cachedMeta = metaResult.value;
-  return { prompts: cachedPrompts, meta: cachedMeta };
-}
-
 export function CanvasPromptGalleryImportDialog({ open, importing, onOpenChange, onConfirm }: CanvasPromptGalleryImportDialogProps) {
   const [prompts, setPrompts] = useState<PromptWithKey[]>([]);
-  const [sourceMeta, setSourceMeta] = useState<PromptGalleryMeta | null>(cachedMeta);
+  const [sourceMeta, setSourceMeta] = useState<PromptGalleryMeta | null>(() => promptGalleryCache.peek()?.meta ?? null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -56,8 +39,10 @@ export function CanvasPromptGalleryImportDialog({ open, importing, onOpenChange,
   const scrollRef = useRef<HTMLDivElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const prevOpenRef = useRef(false);
+  const requestGenerationRef = useRef(0);
 
   useEffect(() => {
+    const generation = ++requestGenerationRef.current;
     if (!open) {
       if (prevOpenRef.current) {
         setQuery("");
@@ -72,18 +57,24 @@ export function CanvasPromptGalleryImportDialog({ open, importing, onOpenChange,
       prevOpenRef.current = true;
       setLoading(true);
       setError(null);
-      void loadPromptGalleryData()
+      void promptGalleryCache.load()
         .then((data) => {
+          if (requestGenerationRef.current !== generation) return;
           setPrompts(data.prompts);
           setSourceMeta(data.meta);
         })
-        .catch((err) => {
-          setError(err instanceof Error ? err.message : "提示词广场暂不可用");
+        .catch(() => {
+          if (requestGenerationRef.current !== generation) return;
+          setError("提示词广场暂不可用");
         })
         .finally(() => {
-          setLoading(false);
+          if (requestGenerationRef.current === generation) setLoading(false);
         });
     }
+
+    return () => {
+      if (requestGenerationRef.current === generation) requestGenerationRef.current += 1;
+    };
   }, [open]);
 
   const visibleCategories = useMemo(() => {
