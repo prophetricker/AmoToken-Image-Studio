@@ -21,7 +21,7 @@ const AMBIGUOUS_STANDALONE_TERMS = Object.freeze([
 const AMBIGUOUS_TERM_SET = new Set(AMBIGUOUS_STANDALONE_TERMS);
 const DEFAULT_IGNORABLE_PATTERN = /\p{Default_Ignorable_Code_Point}/gu;
 const COMPACT_SEPARATOR_PATTERN = /[\p{P}\p{Z}\p{S}]+/gu;
-const MAX_READABLE_IDENTITY_BASE_LENGTH = 160;
+const MAX_PUBLISHED_IDENTITY_LENGTH = 160;
 
 function normalizeText(value) {
   return String(value || '').normalize('NFKC').trim().replace(/\s+/g, ' ');
@@ -115,13 +115,17 @@ function normalizePromptRecord(record) {
   const normalizedUniqueKey = normalizeText(record.uniqueKey);
   const normalizedId = normalizeText(record.id);
   const identityBase = normalizedUniqueKey || normalizedId;
-  const boundedIdentityBase = identityBase.length > MAX_READABLE_IDENTITY_BASE_LENGTH
-    ? createHash('sha256').update(identityBase).digest('hex')
+  const contentHashSuffix = `-${contentHash}`;
+  const isContentBound = identityBase === contentHash || identityBase.endsWith(contentHashSuffix);
+  const contentBoundIdentity = isContentBound
+    ? identityBase
+    : (identityBase ? `${identityBase}${contentHashSuffix}` : contentHash);
+  const unboundIdentityBase = identityBase.endsWith(contentHashSuffix)
+    ? identityBase.slice(0, -contentHashSuffix.length)
     : identityBase;
-  const publishedIdentity = boundedIdentityBase === contentHash
-    || boundedIdentityBase.endsWith(`-${contentHash}`)
-    ? boundedIdentityBase
-    : (boundedIdentityBase ? `${boundedIdentityBase}-${contentHash}` : contentHash);
+  const publishedIdentity = contentBoundIdentity.length > MAX_PUBLISHED_IDENTITY_LENGTH
+    ? `${createHash('sha256').update(unboundIdentityBase).digest('hex')}${contentHashSuffix}`
+    : contentBoundIdentity;
   return {
     id: publishedIdentity,
     title,

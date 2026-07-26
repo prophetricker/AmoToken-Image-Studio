@@ -305,6 +305,20 @@ test('hashes oversized identity bases while keeping content-bound identities dis
   assert.notEqual(first.id, second.id);
 });
 
+test('keeps medium-length content-bound identities idempotent', () => {
+  const mediumKey = 'm'.repeat(100);
+  const once = normalizePromptRecord(prompt('medium identity content', {
+    id: '',
+    uniqueKey: mediumKey,
+  }));
+  const twice = normalizePromptRecord(once);
+
+  assert.deepEqual(twice, once);
+  assert.match(once.id, /^[a-f0-9]{64}-[a-f0-9]{64}$/);
+  assert.equal(once.id.length, 129);
+  assert.equal(once.uniqueKey, once.id);
+});
+
 function buildCandidatePool(count, options = {}) {
   const sourceCount = options.sourceCount || 5;
   const categoryCount = options.categoryCount || 4;
