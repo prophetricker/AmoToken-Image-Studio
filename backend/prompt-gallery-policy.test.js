@@ -227,6 +227,27 @@ test('deduplication uses a deterministic total order and prefers complete metada
   assert.equal(forward[0].notes, complete.notes);
 });
 
+test('uses code-unit ordering for canonically equivalent metadata tie-breaks', () => {
+  const composed = prompt('canonical metadata content', {
+    title: '相同中文标题',
+    score: 7,
+    uniqueKey: 'canonical-key',
+    sourceUrl: 'https://example.com/caf\u00e9',
+  });
+  const decomposed = prompt('canonical metadata content', {
+    title: '相同中文标题',
+    score: 7,
+    uniqueKey: 'canonical-key',
+    sourceUrl: 'https://example.com/cafe\u0301',
+  });
+
+  const forward = prepareCandidates([composed, decomposed]);
+  const reversed = prepareCandidates([decomposed, composed]);
+
+  assert.deepEqual(forward, reversed);
+  assert.equal(forward[0].sourceUrl, decomposed.sourceUrl);
+});
+
 test('publishes only explicit fields and binds normalized identities to content hashes', () => {
   const first = normalizePromptRecord(prompt('first identity content', {
     id: '  shared-id  ',
@@ -262,6 +283,26 @@ test('publishes only explicit fields and binds normalized identities to content 
   ]);
   assert.equal(Object.hasOwn(first, 'internalSecret'), false);
   assert.equal(Object.hasOwn(first, 'parserState'), false);
+});
+
+test('hashes oversized identity bases while keeping content-bound identities distinct', () => {
+  const oversizedKey = 'x'.repeat(100_000);
+  const first = normalizePromptRecord(prompt('first oversized identity', {
+    id: '',
+    uniqueKey: oversizedKey,
+  }));
+  const second = normalizePromptRecord(prompt('second oversized identity', {
+    id: '',
+    uniqueKey: oversizedKey,
+  }));
+
+  assert.match(first.id, /^[a-f0-9]{64}-[a-f0-9]{64}$/);
+  assert.equal(first.id.length, 129);
+  assert.equal(first.uniqueKey, first.id);
+  assert.match(second.id, /^[a-f0-9]{64}-[a-f0-9]{64}$/);
+  assert.equal(second.id.length, 129);
+  assert.equal(second.uniqueKey, second.id);
+  assert.notEqual(first.id, second.id);
 });
 
 function buildCandidatePool(count, options = {}) {

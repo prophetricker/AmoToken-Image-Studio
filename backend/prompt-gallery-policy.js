@@ -21,6 +21,7 @@ const AMBIGUOUS_STANDALONE_TERMS = Object.freeze([
 const AMBIGUOUS_TERM_SET = new Set(AMBIGUOUS_STANDALONE_TERMS);
 const DEFAULT_IGNORABLE_PATTERN = /\p{Default_Ignorable_Code_Point}/gu;
 const COMPACT_SEPARATOR_PATTERN = /[\p{P}\p{Z}\p{S}]+/gu;
+const MAX_READABLE_IDENTITY_BASE_LENGTH = 160;
 
 function normalizeText(value) {
   return String(value || '').normalize('NFKC').trim().replace(/\s+/g, ' ');
@@ -114,9 +115,13 @@ function normalizePromptRecord(record) {
   const normalizedUniqueKey = normalizeText(record.uniqueKey);
   const normalizedId = normalizeText(record.id);
   const identityBase = normalizedUniqueKey || normalizedId;
-  const publishedIdentity = identityBase === contentHash || identityBase.endsWith(`-${contentHash}`)
-    ? identityBase
-    : (identityBase ? `${identityBase}-${contentHash}` : contentHash);
+  const boundedIdentityBase = identityBase.length > MAX_READABLE_IDENTITY_BASE_LENGTH
+    ? createHash('sha256').update(identityBase).digest('hex')
+    : identityBase;
+  const publishedIdentity = boundedIdentityBase === contentHash
+    || boundedIdentityBase.endsWith(`-${contentHash}`)
+    ? boundedIdentityBase
+    : (boundedIdentityBase ? `${boundedIdentityBase}-${contentHash}` : contentHash);
   return {
     id: publishedIdentity,
     title,
@@ -188,7 +193,9 @@ function compareCandidateQuality(left, right) {
   if (right.score !== left.score) return right.score - left.score;
   const hashOrder = left.contentHash.localeCompare(right.contentHash);
   if (hashOrder !== 0) return hashOrder;
-  return stableRecordValue(left).localeCompare(stableRecordValue(right));
+  const leftValue = stableRecordValue(left);
+  const rightValue = stableRecordValue(right);
+  return leftValue < rightValue ? -1 : (leftValue > rightValue ? 1 : 0);
 }
 
 function prepareCandidates(records, options = {}) {
