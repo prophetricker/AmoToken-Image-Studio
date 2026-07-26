@@ -1,0 +1,15 @@
+[
+  {
+    "id": "dw-7",
+    "title_cn": "玻璃香水产品摄影",
+    "title_en": "Glass perfume product photo",
+    "prompt": "拍摄一张玻璃香水瓶产品图，使用柔和侧光与干净背景。",
+    "image": "./images/perfume.png",
+    "category_cn": "产品摄影",
+    "category": "product",
+    "author": "fixture-author",
+    "source": "fixture-source",
+    "needs_ref": true,
+    "note": "保持瓶身文字清晰"
+  }
+]

@@ -1,0 +1,23 @@
+{
+  "sections": [
+    {
+      "id": "poster",
+      "prompts": [
+        {
+          "id": "banana-poster-1",
+          "title": "复古茶饮海报",
+          "content": "为春日茶饮设计一张复古产品海报，使用清晰中文标题。",
+          "images": [
+            "https://images.example.com/nanobanana/tea-poster.png"
+          ],
+          "tags": [
+            "海报",
+            "产品"
+          ],
+          "contributor": "fixture-author",
+          "notes": "fixture note"
+        }
+      ]
+    }
+  ]
+}
