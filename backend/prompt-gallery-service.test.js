@@ -271,7 +271,7 @@ test('publishes 1000 on the first healthy refresh and rotates at most 20 later',
   assert.ok([...firstHashes].filter(hash => !secondHashes.has(hash)).length <= 20);
 });
 
-test('does not let explicit initial refresh bypass rotation when source state persists', async (t) => {
+test('does not let explicit initial refresh bypass rotation after a publication is committed', async (t) => {
   for (const previousCount of [950, 1000]) {
     await t.test(`${previousCount} published records`, async (subtest) => {
       const previous = publishedRecords(previousCount, `previous-${previousCount}`);
@@ -281,7 +281,6 @@ test('does not let explicit initial refresh bypass rotation when source state pe
         createSource(`replacement-${previousCount}-${index}`, 250)
       ));
       store.savePublished(previous);
-      store.saveSource(sources[0].id, [promptRecord(sources[0].id, 'persisted-source')]);
       const service = createService(paths, {
         sources,
         async fetchImpl(url) {
@@ -301,6 +300,31 @@ test('does not let explicit initial refresh bypass rotation when source state pe
       assert.ok([...beforeHashes].filter(hash => !afterHashes.has(hash)).length <= 20);
     });
   }
+});
+
+test('does not treat a below-minimum source snapshot as persistent publication state', async (t) => {
+  const bundled = publishedRecords(1000, 'minimum-bundle');
+  const paths = createPaths(t, bundled);
+  const sources = Array.from({ length: 4 }, (_, index) => (
+    createSource(`minimum-source-${index}`, 250)
+  ));
+  const store = createPromptGalleryStore(paths.dataDir);
+  store.saveSource(sources[0].id, [promptRecord(sources[0].id, 'collapsed')]);
+  const service = createService(paths, {
+    sources,
+    async fetchImpl(url) {
+      const source = sources.find(candidate => url.includes(candidate.id));
+      return response(sourceDocument(source.id, 300, 'fresh-minimum'));
+    },
+  });
+
+  service.load();
+  assert.equal(service.getMeta().sources[0].status, 'pending');
+  await service.refresh({ initial: true });
+  const published = service.getPublished();
+
+  assert.equal(published.length, 1000);
+  assert.equal(published.every(record => record.content.includes('fresh-minimum')), true);
 });
 
 test('returns only safe source metadata and refresh summary fields', async (t) => {
@@ -443,7 +467,26 @@ test('does not advertise a persisted next refresh time before a scheduler is sta
   assert.equal(service.getMeta().nextRefreshAt, null);
 });
 
-test('writes and reloads only publication wrappers committed by matching manifests', async (t) => {
+test('does not let a canonical legacy array bypass a new-protocol manifest marker', (t) => {
+  const bundled = [promptRecord('marker-bundle', 'marker-bundle-record')];
+  const paths = createPaths(t, bundled);
+  const store = createPromptGalleryStore(paths.dataDir);
+  store.savePublished(publishedRecords(950, 'forbidden-legacy'));
+  store.saveManifest({
+    publicationGeneration: '11111111-1111-4111-8111-111111111111',
+    publishedHash: '0'.repeat(64),
+    refreshedAt: '2026-07-26T03:00:00.000Z',
+    sources: [],
+  });
+  const service = createService(paths, { sources: [], fetchImpl: async () => response('') });
+
+  service.load();
+
+  assert.equal(service.getPublished().length, 1);
+  assert.equal(service.getPublished()[0].source, 'marker-bundle');
+});
+
+test('loads the manifest generation before the best-effort canonical mirror', async (t) => {
   const bundled = publishedRecords(1000, 'bundle-generation');
   const paths = createPaths(t, bundled);
   const sources = Array.from({ length: 4 }, (_, index) => createSource(`wrapper-${index}`, 250));
@@ -459,8 +502,9 @@ test('writes and reloads only publication wrappers committed by matching manifes
   service.load();
   await service.refresh({ initial: true });
   const store = createPromptGalleryStore(paths.dataDir);
-  const publication = store.loadPublished();
   const manifest = store.loadManifest();
+  const publication = store.loadPublishedGeneration(manifest.publicationGeneration);
+  const canonical = store.loadPublished();
 
   assert.equal(publication.version, 1);
   assert.equal(typeof publication.publicationGeneration, 'string');
@@ -470,6 +514,7 @@ test('writes and reloads only publication wrappers committed by matching manifes
   assert.equal(publication.prompts.length, 1000);
   assert.equal(manifest.publicationGeneration, publication.publicationGeneration);
   assert.equal(manifest.publishedHash, publication.publishedHash);
+  assert.deepEqual(canonical, publication);
 
   const reloaded = createService(paths, serviceOptions);
   reloaded.load();
@@ -479,22 +524,23 @@ test('writes and reloads only publication wrappers committed by matching manifes
     publication.prompts.map(record => record.contentHash),
   );
 
-  publication.prompts[0].title = 'tampered after commit';
-  store.savePublished(publication);
+  canonical.prompts[0].title = 'tampered canonical mirror';
+  store.savePublished(canonical);
   const tamperedReload = createService(paths, serviceOptions);
   tamperedReload.load();
-  assert.equal(tamperedReload.getPublished()[0].source, 'bundle-generation');
+  assert.deepEqual(
+    tamperedReload.getPublished().map(record => record.contentHash),
+    publication.prompts.map(record => record.contentHash),
+  );
 
-  publication.publishedHash = hashPublished(publication.prompts);
-  publication.publicationGeneration = `${manifest.publicationGeneration}-mismatch`;
-  store.savePublished(publication);
+  store.saveManifest({ ...manifest, publishedHash: '0'.repeat(64) });
   const generationMismatchReload = createService(paths, serviceOptions);
   generationMismatchReload.load();
   assert.equal(generationMismatchReload.getPublished()[0].source, 'bundle-generation');
 });
 
-test('does not advance public memory unless publication and manifest both commit', async (t) => {
-  for (const failurePoint of ['published', 'manifest']) {
+test('keeps initial fill eligibility after the first publication commit attempt fails', async (t) => {
+  for (const failurePoint of ['generation', 'manifest']) {
     await t.test(`${failurePoint} write failure`, async (subtest) => {
       const bundled = publishedRecords(1000, `old-${failurePoint}`);
       const paths = createPaths(subtest, bundled);
@@ -502,17 +548,23 @@ test('does not advance public memory unless publication and manifest both commit
       const sources = Array.from({ length: 4 }, (_, index) => (
         createSource(`${failurePoint}-source-${index}`, 250)
       ));
+      let shouldFail = true;
+      let version = 'failed-first';
       const failingStore = {
         loadSource: id => realStore.loadSource(id),
         saveSource: (id, records) => realStore.saveSource(id, records),
         loadPublished: () => realStore.loadPublished(),
-        savePublished(value) {
-          if (failurePoint === 'published') throw new Error('published write failed');
-          realStore.savePublished(value);
+        savePublished: value => realStore.savePublished(value),
+        loadPublishedGeneration: generation => realStore.loadPublishedGeneration(generation),
+        savePublishedGeneration(generation, value) {
+          if (shouldFail && failurePoint === 'generation') {
+            throw new Error('generation write failed');
+          }
+          realStore.savePublishedGeneration(generation, value);
         },
         loadManifest: () => realStore.loadManifest(),
         saveManifest(value) {
-          if (failurePoint === 'manifest') throw new Error('manifest write failed');
+          if (shouldFail && failurePoint === 'manifest') throw new Error('manifest write failed');
           realStore.saveManifest(value);
         },
       };
@@ -521,7 +573,7 @@ test('does not advance public memory unless publication and manifest both commit
         sources,
         async fetchImpl(url) {
           const source = sources.find(candidate => url.includes(candidate.id));
-          return response(sourceDocument(source.id, 300, 'new-generation'));
+          return response(sourceDocument(source.id, 300, version));
         },
       };
       const service = createService(paths, serviceOptions);
@@ -533,13 +585,104 @@ test('does not advance public memory unless publication and manifest both commit
 
       assert.deepEqual(service.getPublished(), beforePublished);
       assert.deepEqual(service.getMeta(), beforeMeta);
-      if (failurePoint === 'manifest') {
-        const reloaded = createService(paths, { ...serviceOptions, store: realStore });
-        reloaded.load();
-        assert.deepEqual(reloaded.getPublished(), beforePublished);
-      }
+      shouldFail = false;
+      version = 'retry-full';
+      await service.refresh({ initial: true });
+      assert.equal(service.getPublished().length, 1000);
+      assert.equal(
+        service.getPublished().every(record => record.content.includes('retry-full')),
+        true,
+      );
     });
   }
+});
+
+test('recovers committed generation A when generation B is orphaned before manifest commit', async (t) => {
+  const bundled = publishedRecords(1000, 'recovery-bundle');
+  const paths = createPaths(t, bundled);
+  const realStore = createPromptGalleryStore(paths.dataDir);
+  const sources = Array.from({ length: 4 }, (_, index) => createSource(`recovery-${index}`, 250));
+  let version = 'generation-a';
+  const fetchImpl = async (url) => {
+    const source = sources.find(candidate => url.includes(candidate.id));
+    return response(sourceDocument(source.id, 300, version));
+  };
+  const serviceA = createService(paths, { sources, fetchImpl });
+  serviceA.load();
+  await serviceA.refresh({ initial: true });
+  const manifestA = realStore.loadManifest();
+  const hashesA = serviceA.getPublished().map(record => record.contentHash);
+  let failManifest = true;
+  const switchableStore = {
+    loadSource: id => realStore.loadSource(id),
+    saveSource: (id, records) => realStore.saveSource(id, records),
+    loadPublished: () => realStore.loadPublished(),
+    savePublished: value => realStore.savePublished(value),
+    loadPublishedGeneration: generation => realStore.loadPublishedGeneration(generation),
+    savePublishedGeneration: (generation, value) => (
+      realStore.savePublishedGeneration(generation, value)
+    ),
+    loadManifest: () => realStore.loadManifest(),
+    saveManifest(value) {
+      if (failManifest) throw new Error('manifest B failed');
+      realStore.saveManifest(value);
+    },
+  };
+  const serviceB = createService(paths, { store: switchableStore, sources, fetchImpl });
+  serviceB.load();
+  version = 'generation-b';
+
+  await assert.rejects(() => serviceB.refresh(), /manifest B failed/);
+
+  assert.equal(realStore.loadManifest().publicationGeneration, manifestA.publicationGeneration);
+  const afterFailure = createService(paths, { sources, fetchImpl });
+  afterFailure.load();
+  assert.deepEqual(afterFailure.getPublished().map(record => record.contentHash), hashesA);
+
+  failManifest = false;
+  await serviceB.refresh();
+  const manifestB = realStore.loadManifest();
+  assert.notEqual(manifestB.publicationGeneration, manifestA.publicationGeneration);
+  const afterSuccess = createService(paths, { sources, fetchImpl });
+  afterSuccess.load();
+  assert.deepEqual(afterSuccess.getPublished(), serviceB.getPublished());
+});
+
+test('treats canonical published.json as a best-effort post-commit mirror', async (t) => {
+  const bundled = publishedRecords(1000, 'mirror-bundle');
+  const paths = createPaths(t, bundled);
+  const realStore = createPromptGalleryStore(paths.dataDir);
+  const sources = Array.from({ length: 4 }, (_, index) => createSource(`mirror-${index}`, 250));
+  const canonicalFailingStore = {
+    loadSource: id => realStore.loadSource(id),
+    saveSource: (id, records) => realStore.saveSource(id, records),
+    loadPublished: () => realStore.loadPublished(),
+    savePublished() {
+      throw new Error('canonical mirror unavailable');
+    },
+    loadPublishedGeneration: generation => realStore.loadPublishedGeneration(generation),
+    savePublishedGeneration: (generation, value) => (
+      realStore.savePublishedGeneration(generation, value)
+    ),
+    loadManifest: () => realStore.loadManifest(),
+    saveManifest: value => realStore.saveManifest(value),
+  };
+  const serviceOptions = {
+    sources,
+    async fetchImpl(url) {
+      const source = sources.find(candidate => url.includes(candidate.id));
+      return response(sourceDocument(source.id, 300, 'mirror-committed'));
+    },
+  };
+  const service = createService(paths, { ...serviceOptions, store: canonicalFailingStore });
+  service.load();
+
+  await assert.doesNotReject(() => service.refresh({ initial: true }));
+
+  assert.equal(service.getPublished().every(record => record.content.includes('mirror-committed')), true);
+  const reloaded = createService(paths, serviceOptions);
+  reloaded.load();
+  assert.deepEqual(reloaded.getPublished(), service.getPublished());
 });
 
 test('persists successful source snapshots before publication and manifest', async (t) => {
@@ -558,8 +701,13 @@ test('persists successful source snapshots before publication and manifest', asy
     },
     loadPublished: () => realStore.loadPublished(),
     savePublished(records) {
-      operations.push('published');
+      operations.push('canonical');
       realStore.savePublished(records);
+    },
+    loadPublishedGeneration: generation => realStore.loadPublishedGeneration(generation),
+    savePublishedGeneration(generation, publication) {
+      operations.push('generation');
+      realStore.savePublishedGeneration(generation, publication);
     },
     loadManifest: () => realStore.loadManifest(),
     saveManifest(manifest) {
@@ -582,8 +730,9 @@ test('persists successful source snapshots before publication and manifest', asy
   assert.deepEqual(realStore.loadSource(staleSource.id), previous);
   assert.deepEqual(operations, [
     `source:${healthySource.id}`,
-    'published',
+    'generation',
     'manifest',
+    'canonical',
   ]);
 });
 
@@ -809,6 +958,10 @@ test('scheduler uses a short retry after refresh commit failure', async (t) => {
     saveSource: (id, records) => realStore.saveSource(id, records),
     loadPublished: () => realStore.loadPublished(),
     savePublished: value => realStore.savePublished(value),
+    loadPublishedGeneration: generation => realStore.loadPublishedGeneration(generation),
+    savePublishedGeneration: (generation, value) => (
+      realStore.savePublishedGeneration(generation, value)
+    ),
     loadManifest: () => realStore.loadManifest(),
     saveManifest() {
       throw new Error('manifest unavailable');

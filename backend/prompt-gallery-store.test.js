@@ -59,6 +59,30 @@ test('keeps source, published, and manifest snapshots at separate paths', (t) =>
   assert.ok(fs.existsSync(path.join(dataDir, 'manifest.json')));
 });
 
+test('stores isolated publication generations under strictly validated UUID paths', (t) => {
+  const dataDir = createTempDir();
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  const store = createPromptGalleryStore(dataDir);
+  const generation = '11111111-1111-4111-8111-111111111111';
+  const publication = { version: 1, publicationGeneration: generation, prompts: [] };
+
+  store.savePublishedGeneration(generation, publication);
+
+  assert.deepEqual(store.loadPublishedGeneration(generation), publication);
+  assert.ok(fs.existsSync(path.join(dataDir, 'publications', `${generation}.json`)));
+  for (const invalid of [
+    '../escape',
+    '..\\escape',
+    'nested/generation',
+    'not-a-uuid',
+    '11111111-1111-1111-1111-111111111111',
+    '',
+  ]) {
+    assert.throws(() => store.savePublishedGeneration(invalid, publication), /generation/i);
+    assert.throws(() => store.loadPublishedGeneration(invalid), /generation/i);
+  }
+});
+
 test('failed final replacement preserves the previous target and cleans the temporary file', (t) => {
   const dataDir = createTempDir();
   t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
@@ -129,4 +153,43 @@ test('fsyncs and closes the parent directory after rename on non-Windows platfor
 
   assert.equal(directoryFsyncCount, 1);
   assert.equal(directoryCloseCount, 1);
+});
+
+test('treats parent directory fsync and close failures as best-effort after rename', async (t) => {
+  for (const failurePoint of ['fsync', 'close']) {
+    await t.test(`${failurePoint} failure`, () => {
+      const dataDir = createTempDir();
+      t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+      const directoryDescriptor = 987_654;
+      let directoryCloseCount = 0;
+      const fsImpl = {
+        ...fs,
+        openSync(targetPath, flags, mode) {
+          if (path.resolve(targetPath) === path.resolve(dataDir)) return directoryDescriptor;
+          return fs.openSync(targetPath, flags, mode);
+        },
+        fsyncSync(descriptor) {
+          if (descriptor === directoryDescriptor) {
+            if (failurePoint === 'fsync') throw new Error('directory fsync failed');
+            return;
+          }
+          return fs.fsyncSync(descriptor);
+        },
+        closeSync(descriptor) {
+          if (descriptor === directoryDescriptor) {
+            directoryCloseCount += 1;
+            if (failurePoint === 'close') throw new Error('directory close failed');
+            return;
+          }
+          return fs.closeSync(descriptor);
+        },
+      };
+      const store = createPromptGalleryStore(dataDir, { fsImpl, platform: 'linux' });
+      const replacement = [{ uniqueKey: `replacement-${failurePoint}` }];
+
+      assert.doesNotThrow(() => store.savePublished(replacement));
+      assert.deepEqual(store.loadPublished(), replacement);
+      assert.equal(directoryCloseCount, 1);
+    });
+  }
 });

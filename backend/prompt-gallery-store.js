@@ -10,11 +10,20 @@ function validateSourceId(sourceId) {
   return value;
 }
 
+function validateGenerationId(generation) {
+  const value = String(generation || '');
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+    throw new Error('Invalid prompt gallery publication generation');
+  }
+  return value;
+}
+
 function createPromptGalleryStore(dataDir, options = {}) {
   const fsImpl = options.fsImpl || fs;
   const platform = options.platform || process.platform;
   const root = path.resolve(dataDir);
   const sourcesDir = path.join(root, 'sources');
+  const publicationsDir = path.join(root, 'publications');
   const publishedPath = path.join(root, 'published.json');
   const manifestPath = path.join(root, 'manifest.json');
 
@@ -39,11 +48,24 @@ function createPromptGalleryStore(dataDir, options = {}) {
       fileDescriptor = undefined;
       fsImpl.renameSync(temporaryPath, targetPath);
       if (platform !== 'win32') {
-        const directoryDescriptor = fsImpl.openSync(path.dirname(targetPath), 'r');
+        let directoryDescriptor;
         try {
-          fsImpl.fsyncSync(directoryDescriptor);
+          directoryDescriptor = fsImpl.openSync(path.dirname(targetPath), 'r');
+          try {
+            fsImpl.fsyncSync(directoryDescriptor);
+          } catch {
+            // The rename is already committed; directory durability is best-effort.
+          }
+        } catch {
+          // Some filesystems do not support opening directories for fsync.
         } finally {
-          fsImpl.closeSync(directoryDescriptor);
+          if (directoryDescriptor !== undefined) {
+            try {
+              fsImpl.closeSync(directoryDescriptor);
+            } catch {
+              // The rename remains the logical commit point.
+            }
+          }
         }
       }
     } catch (error) {
@@ -67,6 +89,10 @@ function createPromptGalleryStore(dataDir, options = {}) {
     return path.join(sourcesDir, `${validateSourceId(sourceId)}.json`);
   }
 
+  function publicationGenerationPath(generation) {
+    return path.join(publicationsDir, `${validateGenerationId(generation)}.json`);
+  }
+
   return {
     loadSource(sourceId) {
       return readJson(sourcePath(sourceId));
@@ -79,6 +105,12 @@ function createPromptGalleryStore(dataDir, options = {}) {
     },
     savePublished(records) {
       writeJson(publishedPath, records);
+    },
+    loadPublishedGeneration(generation) {
+      return readJson(publicationGenerationPath(generation));
+    },
+    savePublishedGeneration(generation, publication) {
+      writeJson(publicationGenerationPath(generation), publication);
     },
     loadManifest() {
       return readJson(manifestPath);

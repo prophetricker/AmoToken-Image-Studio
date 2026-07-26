@@ -94,7 +94,7 @@ function createPromptGalleryService(options) {
   let refreshedAt = null;
   let nextRefreshAt = null;
   let loaded = false;
-  let hasPersistentSourceState = false;
+  let initialPublicationCommitted = false;
   let refreshPromise = null;
   let schedulerTimer = null;
   let schedulerRunning = false;
@@ -136,32 +136,43 @@ function createPromptGalleryService(options) {
     const bundledRecords = normalizePublishedRecords(
       Array.isArray(bundled) ? bundled : bundled?.prompts,
     ) || [];
-    if (Array.isArray(rawPublication)) {
+    const hasNewProtocolMarker = rawManifest
+      && typeof rawManifest === 'object'
+      && !Array.isArray(rawManifest)
+      && (Object.hasOwn(rawManifest, 'publicationGeneration')
+        || Object.hasOwn(rawManifest, 'publishedHash'));
+
+    if (hasNewProtocolMarker) {
+      let generationPublication;
+      try {
+        generationPublication = store.loadPublishedGeneration(
+          rawManifest.publicationGeneration,
+        );
+      } catch {
+        generationPublication = null;
+      }
+      const generationRecords = normalizePublishedRecords(generationPublication?.prompts) || [];
+      if (isCommittedPublication(generationPublication, rawManifest, generationRecords)) {
+        return {
+          records: generationRecords,
+          manifest: rawManifest,
+          committed: true,
+        };
+      }
+    } else if (Array.isArray(rawPublication)) {
       const legacyRecords = normalizePublishedRecords(rawPublication) || [];
       if (legacyRecords.length >= MINIMUM_PUBLISHED_COUNT) {
         return {
           records: legacyRecords,
-          generation: null,
-          hash: createPublishedHash(legacyRecords),
           manifest: rawManifest && typeof rawManifest === 'object' ? rawManifest : null,
-        };
-      }
-    } else {
-      const wrapperRecords = normalizePublishedRecords(rawPublication?.prompts) || [];
-      if (isCommittedPublication(rawPublication, rawManifest, wrapperRecords)) {
-        return {
-          records: wrapperRecords,
-          generation: rawPublication.publicationGeneration,
-          hash: rawPublication.publishedHash,
-          manifest: rawManifest,
+          committed: true,
         };
       }
     }
     return {
       records: bundledRecords,
-      generation: null,
-      hash: createPublishedHash(bundledRecords),
       manifest: null,
+      committed: false,
     };
   }
 
@@ -176,18 +187,21 @@ function createPromptGalleryService(options) {
     );
 
     published = loadedPublication.records;
+    initialPublicationCommitted = loadedPublication.committed;
     refreshedAt = normalizeTimestamp(trustedManifest?.refreshedAt);
     nextRefreshAt = null;
     sourceSnapshots = new Map();
     sourceStates = new Map();
-    hasPersistentSourceState = false;
 
     for (const source of sources) {
-      const snapshot = normalizeSourceSnapshot(store.loadSource(source.id));
+      const normalizedSnapshot = normalizeSourceSnapshot(store.loadSource(source.id));
+      const minimumCount = Math.max(0, Number(source.minimumCount) || 0);
+      const snapshot = normalizedSnapshot && normalizedSnapshot.length >= minimumCount
+        ? normalizedSnapshot
+        : null;
       const persistedState = manifestSources.get(source.id) || {};
       if (snapshot) {
         sourceSnapshots.set(source.id, snapshot);
-        hasPersistentSourceState = true;
       }
       sourceStates.set(source.id, {
         status: snapshot && PUBLIC_SOURCE_STATUSES.has(persistedState.status)
@@ -346,7 +360,7 @@ function createPromptGalleryService(options) {
 
   async function performRefresh(refreshOptions = {}) {
     if (!loaded) load();
-    const initialFill = !hasPersistentSourceState;
+    const initialFill = !initialPublicationCommitted;
     const refreshTime = currentTime();
     const stagedSnapshots = new Map(sourceSnapshots);
     const stagedStates = cloneStateMap(sourceStates);
@@ -354,7 +368,6 @@ function createPromptGalleryService(options) {
 
     // Source snapshots are independently durable even if publication commit fails.
     sourceSnapshots = stagedSnapshots;
-    hasPersistentSourceState = sources.some(source => stagedSnapshots.has(source.id));
 
     const merged = sources.flatMap(source => asArray(stagedSnapshots.get(source.id)));
     const blacklist = loadBlacklist();
@@ -393,13 +406,23 @@ function createPromptGalleryService(options) {
       stagedStates,
     });
 
-    store.savePublished(publication);
+    store.savePublishedGeneration(nextGeneration, publication);
     store.saveManifest(manifest);
 
     published = normalizedNext;
     refreshedAt = refreshTime;
     nextRefreshAt = stagedNextRefreshAt;
     sourceStates = stagedStates;
+    initialPublicationCommitted = true;
+
+    // Compatibility mirror only: manifest + generation is already committed.
+    try {
+      store.savePublished(publication);
+    } catch {
+      safeWarn('Prompt gallery canonical mirror update failed', {
+        code: 'canonical_mirror_failed',
+      });
+    }
     return getMeta();
   }
 
