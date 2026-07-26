@@ -14,9 +14,27 @@ const ALLOWED_PROMPT_IMAGE_HOSTS = new Set([
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
 const GITHUB_ATTACHMENT_PATH = /^\/user-attachments\/assets\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+function hasExplicitPortInAuthority(value) {
+  const schemeSeparator = value.indexOf('://');
+  if (schemeSeparator < 0) return false;
+  const authorityStart = schemeSeparator + 3;
+  const authorityEndOffset = value.slice(authorityStart).search(/[/?#]/);
+  const authorityEnd = authorityEndOffset < 0
+    ? value.length
+    : authorityStart + authorityEndOffset;
+  const authority = value.slice(authorityStart, authorityEnd);
+  const hostAndPort = authority.slice(authority.lastIndexOf('@') + 1);
+  if (hostAndPort.startsWith('[')) {
+    const closingBracket = hostAndPort.indexOf(']');
+    return closingBracket >= 0 && hostAndPort[closingBracket + 1] === ':';
+  }
+  return hostAndPort.includes(':');
+}
+
 function normalizePromptImageUrl(rawUrl) {
   const value = String(rawUrl || '').trim();
   if (!value) return '';
+  if (hasExplicitPortInAuthority(value)) return '';
 
   let parsed;
   try {
@@ -25,7 +43,7 @@ function normalizePromptImageUrl(rawUrl) {
     return '';
   }
 
-  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return '';
+  if (parsed.protocol !== 'https:') return '';
   if (parsed.username || parsed.password || parsed.port) return '';
 
   if (parsed.hostname === CCODE_PROXY_HOST) {

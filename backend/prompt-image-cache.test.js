@@ -31,6 +31,13 @@ test('keeps existing raw GitHub and ccode proxy image compatibility', () => {
   assert.equal(normalizePromptImageUrl(proxied), raw);
 });
 
+test('rejects an HTTP ccode proxy URL before it can be rewritten as HTTPS', () => {
+  const insecureProxy = 'http://proxy.ccode.vip/https/raw.githubusercontent.com/example/gallery/main/image.png';
+
+  assert.equal(normalizePromptImageUrl(insecureProxy), '');
+  assert.equal(isAllowedPromptImageUrl(insecureProxy), false);
+});
+
 test('allows supported images on the exact trusted external hosts over HTTPS', () => {
   for (const url of TRUSTED_EXTERNAL_IMAGES) {
     assert.equal(isAllowedPromptImageUrl(url), true, url);
@@ -62,14 +69,25 @@ test('rejects unsafe variants and untrusted external image hosts', () => {
   }
 });
 
-test('rejects credentials and non-default ports for every allowed image URL shape', () => {
+test('rejects credentials and every explicit port for each allowed image URL shape', () => {
   const unsafeUrls = [
     'https://user:pass@github.com/user-attachments/assets/3a056a8d-904e-4b3e-b0d2-b5122758b7f5',
     'https://github.com:444/user-attachments/assets/3a056a8d-904e-4b3e-b0d2-b5122758b7f5',
+    'https://github.com:443/user-attachments/assets/3a056a8d-904e-4b3e-b0d2-b5122758b7f5',
     'https://user:pass@raw.githubusercontent.com/example/gallery/main/image.png',
     'https://raw.githubusercontent.com:444/example/gallery/main/image.png',
+    'https://raw.githubusercontent.com:443/example/gallery/main/image.png',
     'https://user:pass@proxy.ccode.vip/https/raw.githubusercontent.com/example/gallery/main/image.png',
     'https://proxy.ccode.vip:444/https/raw.githubusercontent.com/example/gallery/main/image.png',
+    'https://proxy.ccode.vip:443/https/raw.githubusercontent.com/example/gallery/main/image.png',
+    ...TRUSTED_EXTERNAL_IMAGES.flatMap((trustedUrl) => {
+      const url = new URL(trustedUrl);
+      return [
+        `https://user:pass@${url.hostname}${url.pathname}`,
+        `https://${url.hostname}:444${url.pathname}`,
+        `https://${url.hostname}:443${url.pathname}`,
+      ];
+    }),
   ];
 
   for (const url of unsafeUrls) {
