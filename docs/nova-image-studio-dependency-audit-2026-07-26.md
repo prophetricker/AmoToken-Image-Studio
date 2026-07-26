@@ -25,7 +25,7 @@ The Dockerfile has two materially different dependency boundaries:
 
 The commands were run with npm 11.9.0 against `https://registry.npmjs.org/` after regenerating the lockfiles.
 
-At audit time, the registry's Cloudflare response for the larger frontend advisory requests returned gzip bytes without a `Content-Encoding` header, causing npm's initial JSON parse to fail. The frontend commands were rerun with a process-local, ignored preloader that restored only the missing response header for the bulk advisory endpoint. It did not modify the request inventory, response body, lockfiles, or committed files. The counts below are npm's parsed audit results.
+At audit time, the registry's Cloudflare response for the larger frontend advisory requests returned gzip bytes without a `Content-Encoding` header, causing npm's initial JSON parse to fail. The frontend commands were rerun with a process-local, ignored preloader that rewrote `Accept-Encoding` to `identity` on every HTTPS request made by those npm processes and restored the missing `Content-Encoding: gzip` response header for the bulk advisory endpoint. It did not modify the audit request inventory, response body, lockfiles, or committed files. The counts below are npm's parsed audit results.
 
 | Command | Low | Moderate | High | Critical | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
