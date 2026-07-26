@@ -18,6 +18,16 @@ function validateGenerationId(generation) {
   return value;
 }
 
+function generationFromFileName(fileName) {
+  if (typeof fileName !== 'string' || !fileName.endsWith('.json')) return null;
+  const generation = fileName.slice(0, -'.json'.length);
+  try {
+    return validateGenerationId(generation);
+  } catch {
+    return null;
+  }
+}
+
 function createPromptGalleryStore(dataDir, options = {}) {
   const fsImpl = options.fsImpl || fs;
   const platform = options.platform || process.platform;
@@ -26,6 +36,29 @@ function createPromptGalleryStore(dataDir, options = {}) {
   const publicationsDir = path.join(root, 'publications');
   const publishedPath = path.join(root, 'published.json');
   const manifestPath = path.join(root, 'manifest.json');
+
+  function fsyncDirectoryBestEffort(directoryPath) {
+    if (platform === 'win32') return;
+    let directoryDescriptor;
+    try {
+      directoryDescriptor = fsImpl.openSync(directoryPath, 'r');
+      try {
+        fsImpl.fsyncSync(directoryDescriptor);
+      } catch {
+        // The filesystem operation is already logically committed.
+      }
+    } catch {
+      // Some filesystems do not support opening directories for fsync.
+    } finally {
+      if (directoryDescriptor !== undefined) {
+        try {
+          fsImpl.closeSync(directoryDescriptor);
+        } catch {
+          // Directory durability remains best-effort after the commit point.
+        }
+      }
+    }
+  }
 
   function readJson(targetPath) {
     try {
@@ -47,27 +80,7 @@ function createPromptGalleryStore(dataDir, options = {}) {
       fsImpl.closeSync(fileDescriptor);
       fileDescriptor = undefined;
       fsImpl.renameSync(temporaryPath, targetPath);
-      if (platform !== 'win32') {
-        let directoryDescriptor;
-        try {
-          directoryDescriptor = fsImpl.openSync(path.dirname(targetPath), 'r');
-          try {
-            fsImpl.fsyncSync(directoryDescriptor);
-          } catch {
-            // The rename is already committed; directory durability is best-effort.
-          }
-        } catch {
-          // Some filesystems do not support opening directories for fsync.
-        } finally {
-          if (directoryDescriptor !== undefined) {
-            try {
-              fsImpl.closeSync(directoryDescriptor);
-            } catch {
-              // The rename remains the logical commit point.
-            }
-          }
-        }
-      }
+      fsyncDirectoryBestEffort(path.dirname(targetPath));
     } catch (error) {
       if (fileDescriptor !== undefined) {
         try {
@@ -111,6 +124,34 @@ function createPromptGalleryStore(dataDir, options = {}) {
     },
     savePublishedGeneration(generation, publication) {
       writeJson(publicationGenerationPath(generation), publication);
+    },
+    listPublishedGenerations() {
+      let entries;
+      try {
+        entries = fsImpl.readdirSync(publicationsDir, { withFileTypes: true });
+      } catch (error) {
+        if (error?.code === 'ENOENT') return [];
+        throw error;
+      }
+      return entries
+        .filter(entry => entry.isFile())
+        .map(entry => generationFromFileName(entry.name))
+        .filter(Boolean)
+        .sort();
+    },
+    deletePublishedGeneration(generation) {
+      const targetPath = publicationGenerationPath(generation);
+      let targetStat;
+      try {
+        targetStat = fsImpl.lstatSync(targetPath);
+      } catch (error) {
+        if (error?.code === 'ENOENT') return false;
+        throw error;
+      }
+      if (!targetStat.isFile()) return false;
+      fsImpl.unlinkSync(targetPath);
+      fsyncDirectoryBestEffort(publicationsDir);
+      return true;
     },
     loadManifest() {
       return readJson(manifestPath);

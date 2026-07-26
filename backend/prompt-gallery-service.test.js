@@ -597,7 +597,7 @@ test('keeps initial fill eligibility after the first publication commit attempt 
   }
 });
 
-test('recovers committed generation A when generation B is orphaned before manifest commit', async (t) => {
+test('deletes orphaned generation B when its manifest commit fails and recovers A', async (t) => {
   const bundled = publishedRecords(1000, 'recovery-bundle');
   const paths = createPaths(t, bundled);
   const realStore = createPromptGalleryStore(paths.dataDir);
@@ -622,6 +622,8 @@ test('recovers committed generation A when generation B is orphaned before manif
     savePublishedGeneration: (generation, value) => (
       realStore.savePublishedGeneration(generation, value)
     ),
+    listPublishedGenerations: () => realStore.listPublishedGenerations(),
+    deletePublishedGeneration: generation => realStore.deletePublishedGeneration(generation),
     loadManifest: () => realStore.loadManifest(),
     saveManifest(value) {
       if (failManifest) throw new Error('manifest B failed');
@@ -635,6 +637,7 @@ test('recovers committed generation A when generation B is orphaned before manif
   await assert.rejects(() => serviceB.refresh(), /manifest B failed/);
 
   assert.equal(realStore.loadManifest().publicationGeneration, manifestA.publicationGeneration);
+  assert.deepEqual(realStore.listPublishedGenerations(), [manifestA.publicationGeneration]);
   const afterFailure = createService(paths, { sources, fetchImpl });
   afterFailure.load();
   assert.deepEqual(afterFailure.getPublished().map(record => record.contentHash), hashesA);
@@ -646,6 +649,238 @@ test('recovers committed generation A when generation B is orphaned before manif
   const afterSuccess = createService(paths, { sources, fetchImpl });
   afterSuccess.load();
   assert.deepEqual(afterSuccess.getPublished(), serviceB.getPublished());
+});
+
+test('keeps only the current and previous committed generations across A B C', async (t) => {
+  const paths = createPaths(t, publishedRecords(1000, 'lifecycle-bundle'));
+  const store = createPromptGalleryStore(paths.dataDir);
+  const sources = Array.from({ length: 4 }, (_, index) => createSource(`lifecycle-${index}`, 250));
+  let version = 'generation-a';
+  const serviceOptions = {
+    sources,
+    async fetchImpl(url) {
+      const source = sources.find(candidate => url.includes(candidate.id));
+      return response(sourceDocument(source.id, 300, version));
+    },
+  };
+  const service = createService(paths, serviceOptions);
+  service.load();
+
+  await service.refresh({ initial: true });
+  const generationA = store.loadManifest().publicationGeneration;
+  version = 'generation-b';
+  await service.refresh();
+  const generationB = store.loadManifest().publicationGeneration;
+  version = 'generation-c';
+  await service.refresh();
+  const generationC = store.loadManifest().publicationGeneration;
+
+  assert.deepEqual(
+    store.listPublishedGenerations(),
+    [generationB, generationC].sort(),
+  );
+  assert.equal(store.loadPublishedGeneration(generationA), null);
+  const reloaded = createService(paths, serviceOptions);
+  reloaded.load();
+  assert.deepEqual(reloaded.getPublished(), service.getPublished());
+  assert.equal(store.loadManifest().publicationGeneration, generationC);
+});
+
+test('never deletes the generation currently referenced by a reread manifest', async (t) => {
+  const paths = createPaths(t, publishedRecords(1000, 'protected-bundle'));
+  const realStore = createPromptGalleryStore(paths.dataDir);
+  const sources = Array.from({ length: 4 }, (_, index) => createSource(`protected-${index}`, 250));
+  const serviceA = createService(paths, {
+    sources,
+    async fetchImpl(url) {
+      const source = sources.find(candidate => url.includes(candidate.id));
+      return response(sourceDocument(source.id, 300, 'generation-a'));
+    },
+  });
+  serviceA.load();
+  await serviceA.refresh({ initial: true });
+  const generationA = realStore.loadManifest().publicationGeneration;
+  const protectedGeneration = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  const orphanGeneration = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  realStore.savePublishedGeneration(protectedGeneration, { protected: true });
+  realStore.savePublishedGeneration(orphanGeneration, { orphan: true });
+  let manifestSaved = false;
+  const concurrentStore = {
+    loadSource: id => realStore.loadSource(id),
+    saveSource: (id, records) => realStore.saveSource(id, records),
+    loadPublished: () => realStore.loadPublished(),
+    savePublished: value => realStore.savePublished(value),
+    loadPublishedGeneration: generation => realStore.loadPublishedGeneration(generation),
+    savePublishedGeneration: (generation, value) => (
+      realStore.savePublishedGeneration(generation, value)
+    ),
+    listPublishedGenerations: () => realStore.listPublishedGenerations(),
+    deletePublishedGeneration: generation => realStore.deletePublishedGeneration(generation),
+    loadManifest() {
+      const manifest = realStore.loadManifest();
+      return manifestSaved
+        ? { ...manifest, publicationGeneration: protectedGeneration }
+        : manifest;
+    },
+    saveManifest(value) {
+      realStore.saveManifest(value);
+      manifestSaved = true;
+    },
+  };
+  const serviceB = createService(paths, {
+    store: concurrentStore,
+    sources,
+    async fetchImpl(url) {
+      const source = sources.find(candidate => url.includes(candidate.id));
+      return response(sourceDocument(source.id, 300, 'generation-b'));
+    },
+  });
+  serviceB.load();
+
+  await serviceB.refresh();
+
+  const generationB = realStore.loadManifest().publicationGeneration;
+  const remaining = realStore.listPublishedGenerations();
+  assert.ok(remaining.includes(generationA));
+  assert.ok(remaining.includes(generationB));
+  assert.ok(remaining.includes(protectedGeneration));
+  assert.equal(remaining.includes(orphanGeneration), false);
+});
+
+test('does not delete next generation when manifest save throws after committing it', async (t) => {
+  const paths = createPaths(t, publishedRecords(1000, 'post-commit-bundle'));
+  const realStore = createPromptGalleryStore(paths.dataDir);
+  const sources = Array.from({ length: 4 }, (_, index) => createSource(`post-commit-${index}`, 250));
+  const serviceA = createService(paths, {
+    sources,
+    async fetchImpl(url) {
+      const source = sources.find(candidate => url.includes(candidate.id));
+      return response(sourceDocument(source.id, 300, 'generation-a'));
+    },
+  });
+  serviceA.load();
+  await serviceA.refresh({ initial: true });
+  const deleted = [];
+  const throwingStore = {
+    loadSource: id => realStore.loadSource(id),
+    saveSource: (id, records) => realStore.saveSource(id, records),
+    loadPublished: () => realStore.loadPublished(),
+    savePublished: value => realStore.savePublished(value),
+    loadPublishedGeneration: generation => realStore.loadPublishedGeneration(generation),
+    savePublishedGeneration: (generation, value) => (
+      realStore.savePublishedGeneration(generation, value)
+    ),
+    listPublishedGenerations: () => realStore.listPublishedGenerations(),
+    deletePublishedGeneration(generation) {
+      deleted.push(generation);
+      return realStore.deletePublishedGeneration(generation);
+    },
+    loadManifest: () => realStore.loadManifest(),
+    saveManifest(value) {
+      realStore.saveManifest(value);
+      throw new Error('manifest acknowledged late');
+    },
+  };
+  const serviceB = createService(paths, {
+    store: throwingStore,
+    sources,
+    async fetchImpl(url) {
+      const source = sources.find(candidate => url.includes(candidate.id));
+      return response(sourceDocument(source.id, 300, 'generation-b'));
+    },
+  });
+  serviceB.load();
+
+  await assert.rejects(() => serviceB.refresh(), /manifest acknowledged late/);
+
+  const committedGeneration = realStore.loadManifest().publicationGeneration;
+  assert.ok(realStore.listPublishedGenerations().includes(committedGeneration));
+  assert.equal(deleted.includes(committedGeneration), false);
+  const reloaded = createService(paths, { sources, fetchImpl: async () => response('') });
+  reloaded.load();
+  assert.equal(reloaded.getPublished().length, 1000);
+  assert.equal(
+    reloaded.getPublished().some(record => record.content.includes('generation-b')),
+    true,
+  );
+});
+
+test('cleanup failures do not roll back a committed generation and log only a code', async (t) => {
+  for (const failurePoint of ['manifest-read', 'list', 'delete']) {
+    await t.test(`${failurePoint} failure`, async (subtest) => {
+      const paths = createPaths(subtest, publishedRecords(1000, `cleanup-${failurePoint}`));
+      const realStore = createPromptGalleryStore(paths.dataDir);
+      const orphanGeneration = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+      realStore.savePublishedGeneration(orphanGeneration, { orphan: true });
+      const sources = Array.from({ length: 4 }, (_, index) => (
+        createSource(`cleanup-${failurePoint}-${index}`, 250)
+      ));
+      const warnings = [];
+      let manifestSaved = false;
+      const failingStore = {
+        loadSource: id => realStore.loadSource(id),
+        saveSource: (id, records) => realStore.saveSource(id, records),
+        loadPublished: () => realStore.loadPublished(),
+        savePublished: value => realStore.savePublished(value),
+        loadPublishedGeneration: generation => realStore.loadPublishedGeneration(generation),
+        savePublishedGeneration: (generation, value) => (
+          realStore.savePublishedGeneration(generation, value)
+        ),
+        listPublishedGenerations() {
+          if (failurePoint === 'list') throw new Error('list failed');
+          return realStore.listPublishedGenerations();
+        },
+        deletePublishedGeneration(generation) {
+          if (failurePoint === 'delete' && generation === orphanGeneration) {
+            throw new Error('delete failed');
+          }
+          return realStore.deletePublishedGeneration(generation);
+        },
+        loadManifest() {
+          if (manifestSaved && failurePoint === 'manifest-read') {
+            throw new Error('manifest reread failed');
+          }
+          return realStore.loadManifest();
+        },
+        saveManifest(value) {
+          realStore.saveManifest(value);
+          manifestSaved = true;
+        },
+      };
+      const service = createService(paths, {
+        store: failingStore,
+        logger: {
+          warn(message, details) {
+            warnings.push({ message, details });
+          },
+        },
+        sources,
+        async fetchImpl(url) {
+          const source = sources.find(candidate => url.includes(candidate.id));
+          return response(sourceDocument(source.id, 300, 'cleanup-new'));
+        },
+      });
+      service.load();
+
+      await assert.doesNotReject(() => service.refresh({ initial: true }));
+
+      assert.equal(
+        service.getPublished().every(record => record.content.includes('cleanup-new')),
+        true,
+      );
+      assert.equal(service.getMeta().refreshedAt, FIXED_NOW.toISOString());
+      assert.ok(realStore.loadManifest().publicationGeneration);
+      assert.ok(warnings.length >= 1);
+      assert.equal(
+        warnings.every(warning => (
+          warning.details
+          && Object.keys(warning.details).length === 1
+          && typeof warning.details.code === 'string'
+        )),
+        true,
+      );
+    });
+  }
 });
 
 test('treats canonical published.json as a best-effort post-commit mirror', async (t) => {

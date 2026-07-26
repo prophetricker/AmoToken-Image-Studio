@@ -83,6 +83,94 @@ test('stores isolated publication generations under strictly validated UUID path
   }
 });
 
+test('lists and deletes only regular UUID publication files without following links', (t) => {
+  const dataDir = createTempDir();
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  const store = createPromptGalleryStore(dataDir);
+  const publicationsDir = path.join(dataDir, 'publications');
+  const regularGeneration = '11111111-1111-4111-8111-111111111111';
+  const directoryGeneration = '22222222-2222-4222-8222-222222222222';
+  const linkedGeneration = '33333333-3333-4333-8333-333333333333';
+  const linkedTarget = path.join(dataDir, 'linked-target');
+  const linkedSentinel = path.join(linkedTarget, 'sentinel.txt');
+  store.savePublishedGeneration(regularGeneration, { prompts: [] });
+  fs.writeFileSync(path.join(publicationsDir, 'not-a-generation.json'), '{}', 'utf8');
+  fs.writeFileSync(
+    path.join(publicationsDir, '44444444-4444-4444-8444-444444444444.txt'),
+    '{}',
+    'utf8',
+  );
+  fs.mkdirSync(path.join(publicationsDir, `${directoryGeneration}.json`));
+  fs.mkdirSync(linkedTarget);
+  fs.writeFileSync(linkedSentinel, 'keep', 'utf8');
+  fs.symlinkSync(
+    linkedTarget,
+    path.join(publicationsDir, `${linkedGeneration}.json`),
+    process.platform === 'win32' ? 'junction' : 'dir',
+  );
+
+  assert.deepEqual(store.listPublishedGenerations(), [regularGeneration]);
+  assert.equal(store.deletePublishedGeneration(directoryGeneration), false);
+  assert.equal(store.deletePublishedGeneration(linkedGeneration), false);
+  assert.equal(fs.readFileSync(linkedSentinel, 'utf8'), 'keep');
+  assert.equal(store.deletePublishedGeneration(regularGeneration), true);
+  assert.equal(store.deletePublishedGeneration(regularGeneration), false);
+  assert.deepEqual(store.listPublishedGenerations(), []);
+  assert.throws(
+    () => store.deletePublishedGeneration('../escape'),
+    /generation/i,
+  );
+});
+
+test('returns no publication generations when their directory does not exist', (t) => {
+  const dataDir = createTempDir();
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  const store = createPromptGalleryStore(dataDir);
+
+  assert.deepEqual(store.listPublishedGenerations(), []);
+});
+
+test('best-effort fsyncs the publication directory after deleting a generation', (t) => {
+  const dataDir = createTempDir();
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  const publicationsDir = path.join(dataDir, 'publications');
+  const generation = '11111111-1111-4111-8111-111111111111';
+  const directoryDescriptor = 987_654;
+  let directoryFsyncCount = 0;
+  let directoryCloseCount = 0;
+  const fsImpl = {
+    ...fs,
+    openSync(targetPath, flags, mode) {
+      if (path.resolve(targetPath) === path.resolve(publicationsDir)) {
+        return directoryDescriptor;
+      }
+      return fs.openSync(targetPath, flags, mode);
+    },
+    fsyncSync(descriptor) {
+      if (descriptor === directoryDescriptor) {
+        directoryFsyncCount += 1;
+        return;
+      }
+      return fs.fsyncSync(descriptor);
+    },
+    closeSync(descriptor) {
+      if (descriptor === directoryDescriptor) {
+        directoryCloseCount += 1;
+        return;
+      }
+      return fs.closeSync(descriptor);
+    },
+  };
+  const store = createPromptGalleryStore(dataDir, { fsImpl, platform: 'linux' });
+  store.savePublishedGeneration(generation, { prompts: [] });
+  directoryFsyncCount = 0;
+  directoryCloseCount = 0;
+
+  assert.equal(store.deletePublishedGeneration(generation), true);
+  assert.equal(directoryFsyncCount, 1);
+  assert.equal(directoryCloseCount, 1);
+});
+
 test('failed final replacement preserves the previous target and cleans the temporary file', (t) => {
   const dataDir = createTempDir();
   t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));

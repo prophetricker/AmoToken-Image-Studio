@@ -95,6 +95,7 @@ function createPromptGalleryService(options) {
   let nextRefreshAt = null;
   let loaded = false;
   let initialPublicationCommitted = false;
+  let committedGeneration = null;
   let refreshPromise = null;
   let schedulerTimer = null;
   let schedulerRunning = false;
@@ -157,6 +158,7 @@ function createPromptGalleryService(options) {
           records: generationRecords,
           manifest: rawManifest,
           committed: true,
+          generation: generationPublication.publicationGeneration,
         };
       }
     } else if (Array.isArray(rawPublication)) {
@@ -166,6 +168,7 @@ function createPromptGalleryService(options) {
           records: legacyRecords,
           manifest: rawManifest && typeof rawManifest === 'object' ? rawManifest : null,
           committed: true,
+          generation: null,
         };
       }
     }
@@ -173,6 +176,7 @@ function createPromptGalleryService(options) {
       records: bundledRecords,
       manifest: null,
       committed: false,
+      generation: null,
     };
   }
 
@@ -188,6 +192,7 @@ function createPromptGalleryService(options) {
 
     published = loadedPublication.records;
     initialPublicationCommitted = loadedPublication.committed;
+    committedGeneration = loadedPublication.generation;
     refreshedAt = normalizeTimestamp(trustedManifest?.refreshedAt);
     nextRefreshAt = null;
     sourceSnapshots = new Map();
@@ -358,6 +363,58 @@ function createPromptGalleryService(options) {
     };
   }
 
+  function warnGenerationCleanup() {
+    safeWarn('Prompt gallery generation cleanup failed', {
+      code: 'generation_cleanup_failed',
+    });
+  }
+
+  function cleanupFailedCommitGeneration(generation) {
+    let manifest;
+    try {
+      manifest = store.loadManifest();
+    } catch {
+      warnGenerationCleanup();
+      return;
+    }
+    if (manifest?.publicationGeneration === generation) return;
+    try {
+      store.deletePublishedGeneration(generation);
+    } catch {
+      warnGenerationCleanup();
+    }
+  }
+
+  function cleanupCommittedGenerations(currentGeneration, previousGeneration) {
+    let manifest;
+    try {
+      manifest = store.loadManifest();
+    } catch {
+      warnGenerationCleanup();
+      return;
+    }
+    const retained = new Set([
+      currentGeneration,
+      previousGeneration,
+      manifest?.publicationGeneration,
+    ].filter(Boolean));
+    let generations;
+    try {
+      generations = store.listPublishedGenerations();
+    } catch {
+      warnGenerationCleanup();
+      return;
+    }
+    for (const generation of generations) {
+      if (retained.has(generation)) continue;
+      try {
+        store.deletePublishedGeneration(generation);
+      } catch {
+        warnGenerationCleanup();
+      }
+    }
+  }
+
   async function performRefresh(refreshOptions = {}) {
     if (!loaded) load();
     const initialFill = !initialPublicationCommitted;
@@ -407,13 +464,22 @@ function createPromptGalleryService(options) {
     });
 
     store.savePublishedGeneration(nextGeneration, publication);
-    store.saveManifest(manifest);
+    try {
+      store.saveManifest(manifest);
+    } catch (error) {
+      cleanupFailedCommitGeneration(nextGeneration);
+      throw error;
+    }
 
+    const previousCommittedGeneration = committedGeneration;
     published = normalizedNext;
     refreshedAt = refreshTime;
     nextRefreshAt = stagedNextRefreshAt;
     sourceStates = stagedStates;
     initialPublicationCommitted = true;
+    committedGeneration = nextGeneration;
+
+    cleanupCommittedGenerations(nextGeneration, previousCommittedGeneration);
 
     // Compatibility mirror only: manifest + generation is already committed.
     try {
