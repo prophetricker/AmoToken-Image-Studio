@@ -19,6 +19,8 @@ const AMBIGUOUS_STANDALONE_TERMS = Object.freeze([
 ]);
 
 const AMBIGUOUS_TERM_SET = new Set(AMBIGUOUS_STANDALONE_TERMS);
+const DEFAULT_IGNORABLE_PATTERN = /\p{Default_Ignorable_Code_Point}/gu;
+const COMPACT_SEPARATOR_PATTERN = /[\p{P}\p{Z}\p{S}]+/gu;
 
 function normalizeText(value) {
   return String(value || '').normalize('NFKC').trim().replace(/\s+/g, ' ');
@@ -28,19 +30,64 @@ function normalizePromptContent(value) {
   return String(value || '').normalize('NFKC').replace(/\r\n?/g, '\n').trim();
 }
 
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function normalizeMatchBase(value) {
+  return String(value || '').normalize('NFKC').toLowerCase();
 }
 
-function isLatinKeyword(value) {
-  return /^[a-z0-9][a-z0-9 -]*$/i.test(value);
+function stripDefaultIgnorables(value) {
+  return value.replace(DEFAULT_IGNORABLE_PATTERN, '');
 }
 
-function keywordMatchesText(text, keyword) {
-  if (isLatinKeyword(keyword)) {
-    return new RegExp(`(^|[^a-z0-9])${escapeRegExp(keyword)}([^a-z0-9]|$)`, 'i').test(text);
+function normalizeLatinTokens(value) {
+  return value.replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function normalizeCompactText(value) {
+  return stripDefaultIgnorables(value).replace(COMPACT_SEPARATOR_PATTERN, '');
+}
+
+function compilePromptBlacklist(rawKeywords = []) {
+  const keywords = Array.isArray(rawKeywords) ? rawKeywords : rawKeywords?.keywords;
+  const matchers = [];
+  const seen = new Set();
+
+  for (const rawKeyword of Array.isArray(keywords) ? keywords : []) {
+    const base = normalizeMatchBase(rawKeyword);
+    const stripped = stripDefaultIgnorables(base);
+    const compact = normalizeCompactText(base);
+    const isLatin = Boolean(compact) && /^[a-z0-9]+$/.test(compact);
+    const value = isLatin ? normalizeLatinTokens(stripped) : compact;
+    if (!value || AMBIGUOUS_TERM_SET.has(value)) continue;
+    const matcherKey = `${isLatin ? 'latin' : 'compact'}\0${value}`;
+    if (seen.has(matcherKey)) continue;
+    seen.add(matcherKey);
+    matchers.push({ isLatin, value });
   }
-  return text.includes(keyword);
+
+  return (record) => {
+    const text = typeof record === 'string'
+      ? record
+      : [record?.title, record?.content, record?.notes].filter(Boolean).join(' ');
+    const base = normalizeMatchBase(text);
+    const stripped = stripDefaultIgnorables(base);
+    let latinWithoutIgnorables;
+    let latinWithIgnorableBoundaries;
+    let compactText;
+
+    return !matchers.some((matcher) => {
+      if (!matcher.isLatin) {
+        compactText ??= normalizeCompactText(base);
+        return compactText.includes(matcher.value);
+      }
+      latinWithoutIgnorables ??= normalizeLatinTokens(stripped);
+      latinWithIgnorableBoundaries ??= normalizeLatinTokens(
+        base.replace(DEFAULT_IGNORABLE_PATTERN, ' '),
+      );
+      const tokenPhrase = ` ${matcher.value} `;
+      return ` ${latinWithoutIgnorables} `.includes(tokenPhrase)
+        || ` ${latinWithIgnorableBoundaries} `.includes(tokenPhrase);
+    });
+  };
 }
 
 function createContentHash(content) {
@@ -49,17 +96,7 @@ function createContentHash(content) {
 }
 
 function isPromptAllowed(record, rawKeywords = []) {
-  const keywords = Array.isArray(rawKeywords) ? rawKeywords : rawKeywords?.keywords;
-  const text = typeof record === 'string'
-    ? record
-    : [record?.title, record?.content, record?.notes].filter(Boolean).join(' ');
-  const normalizedText = normalizeText(text).toLowerCase();
-
-  return !(Array.isArray(keywords) ? keywords : []).some((rawKeyword) => {
-    const keyword = normalizeText(rawKeyword).toLowerCase();
-    if (!keyword || AMBIGUOUS_TERM_SET.has(keyword)) return false;
-    return keywordMatchesText(normalizedText, keyword);
-  });
+  return compilePromptBlacklist(rawKeywords)(record);
 }
 
 function normalizePromptRecord(record) {
@@ -74,11 +111,14 @@ function normalizePromptRecord(record) {
   if (!title || !content || images.length === 0) return null;
 
   const contentHash = createContentHash(content);
-  const uniqueKey = normalizeText(record.uniqueKey || record.id || contentHash);
+  const normalizedUniqueKey = normalizeText(record.uniqueKey);
+  const normalizedId = normalizeText(record.id);
+  const identityBase = normalizedUniqueKey || normalizedId;
+  const publishedIdentity = identityBase === contentHash || identityBase.endsWith(`-${contentHash}`)
+    ? identityBase
+    : (identityBase ? `${identityBase}-${contentHash}` : contentHash);
   return {
-    ...record,
-    id: normalizeText(record.id || uniqueKey),
-    uniqueKey,
+    id: publishedIdentity,
     title,
     content,
     images,
@@ -94,6 +134,7 @@ function normalizePromptRecord(record) {
     category: normalizeText(record.category),
     score: Number.isFinite(Number(record.score)) ? Number(record.score) : 0,
     contentHash,
+    uniqueKey: publishedIdentity,
   };
 }
 
@@ -108,21 +149,54 @@ function isCompleteChineseFacing(record) {
     && Boolean(record.category);
 }
 
+function metadataCompleteness(record) {
+  return [
+    record.source,
+    record.sourceUrl,
+    record.category,
+    record.contributor,
+    record.notes,
+    record.tags.length > 0,
+  ].filter(Boolean).length;
+}
+
+function stableRecordValue(record) {
+  return JSON.stringify([
+    record.title,
+    record.content,
+    [...record.images].sort(),
+    [...record.tags].sort(),
+    record.contributor,
+    record.notes,
+    record.source,
+    record.sourceUrl,
+    record.category,
+    record.score,
+    record.id,
+    record.uniqueKey,
+  ]);
+}
+
 function compareCandidateQuality(left, right) {
   const chineseCompleteness = Number(isCompleteChineseFacing(right))
     - Number(isCompleteChineseFacing(left));
   if (chineseCompleteness !== 0) return chineseCompleteness;
+  const metadataDifference = metadataCompleteness(right) - metadataCompleteness(left);
+  if (metadataDifference !== 0) return metadataDifference;
+  const imageDifference = right.images.length - left.images.length;
+  if (imageDifference !== 0) return imageDifference;
   if (right.score !== left.score) return right.score - left.score;
   const hashOrder = left.contentHash.localeCompare(right.contentHash);
   if (hashOrder !== 0) return hashOrder;
-  return left.uniqueKey.localeCompare(right.uniqueKey);
+  return stableRecordValue(left).localeCompare(stableRecordValue(right));
 }
 
 function prepareCandidates(records, options = {}) {
   const blacklist = options.blacklist || options.keywords || [];
+  const isAllowed = compilePromptBlacklist(blacklist);
   const normalized = (Array.isArray(records) ? records : [])
     .map(normalizePromptRecord)
-    .filter(record => record && isPromptAllowed(record, blacklist))
+    .filter(record => record && isAllowed(record))
     .sort(compareCandidateQuality);
   const seenHashes = new Set();
   return normalized.filter((record) => {
@@ -171,13 +245,12 @@ function selectPublishedCandidates(records, options = {}) {
   return selected;
 }
 
-function normalizeCandidatesInOrder(records, options = {}) {
-  const blacklist = options.blacklist || options.keywords || [];
+function normalizeCandidatesInOrder(records, isAllowed) {
   const normalized = [];
   const seenHashes = new Set();
   for (const rawRecord of Array.isArray(records) ? records : []) {
     const record = normalizePromptRecord(rawRecord);
-    if (!record || !isPromptAllowed(record, blacklist) || seenHashes.has(record.contentHash)) {
+    if (!record || !isAllowed(record) || seenHashes.has(record.contentHash)) {
       continue;
     }
     normalized.push(record);
@@ -193,10 +266,14 @@ function rotatePublished(previousRecords, desiredRecords, options = {}) {
     Math.max(0, Math.floor(options.minimumCount ?? 950)),
   );
   const maxChanges = Math.max(0, Math.floor(options.maxChanges ?? 20));
-  const previous = normalizeCandidatesInOrder(previousRecords, options);
-  const desired = normalizeCandidatesInOrder(desiredRecords, options).slice(0, targetCount);
+  const blacklist = options.blacklist || options.keywords || [];
+  const isAllowed = compilePromptBlacklist(blacklist);
+  const previous = normalizeCandidatesInOrder(previousRecords, isAllowed);
+  const desired = normalizeCandidatesInOrder(desiredRecords, isAllowed).slice(0, targetCount);
 
-  if (previous.length < minimumCount) return desired;
+  if (previous.length < minimumCount) {
+    return desired.length >= minimumCount ? desired : previous;
+  }
 
   const desiredHashes = new Set(desired.map(record => record.contentHash));
   const previousHashes = new Set(previous.map(record => record.contentHash));

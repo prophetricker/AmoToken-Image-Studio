@@ -84,6 +84,37 @@ test('keeps neutral visual vocabulary but blocks only complete prohibited phrase
   assert.equal(isPromptAllowed(prompt('an adult portrait'), ['adult']), false);
 });
 
+test('blocks prohibited Latin phrases across punctuation, full-width text, and zero-width marks', () => {
+  const keywords = ['adult content'];
+
+  for (const content of [
+    'adult-content',
+    'adult/content',
+    'adult\u200bcontent',
+    'adult\u200b content',
+    'ａｄｕｌｔ／ｃｏｎｔｅｎｔ',
+  ]) {
+    assert.equal(isPromptAllowed(prompt(content), keywords), false, content);
+  }
+});
+
+test('blocks compact CJK phrases across punctuation and zero-width marks', () => {
+  const keywords = ['色情内容'];
+
+  for (const content of ['色情-内容', '色情\u200b内容', '色情／内容']) {
+    assert.equal(isPromptAllowed(prompt(content), keywords), false, content);
+  }
+});
+
+test('keeps normal ambiguous visual terms neutral after Unicode normalization', () => {
+  const keywords = [...AMBIGUOUS_TERMS, 'adult content', '色情内容'];
+
+  assert.equal(
+    isPromptAllowed(prompt('ｗｅｔ／leather collar product photo'), keywords),
+    true,
+  );
+});
+
 test('normalizes complete records and rejects missing text or allowed images', () => {
   const normalized = normalizePromptRecord(prompt('  Detailed\n\n product   photo  ', {
     title: '  中文产品标题  ',
@@ -142,7 +173,7 @@ test('deduplicates normalized content and keeps the higher-quality Chinese-facin
 
   assert.equal(result.length, 1);
   assert.equal(result[0].source, 'curated-source');
-  assert.equal(result[0].uniqueKey, 'high-quality');
+  assert.match(result[0].uniqueKey, /^high-quality-[a-f0-9]{64}$/);
 });
 
 test('uses score after Chinese-facing completeness and filters prohibited candidates', () => {
@@ -164,7 +195,73 @@ test('uses score after Chinese-facing completeness and filters prohibited candid
     { blacklist: ['explicit prohibited phrase'] },
   );
 
-  assert.deepEqual(result.map(item => item.uniqueKey), ['higher-score']);
+  assert.match(result[0].uniqueKey, /^higher-score-[a-f0-9]{64}$/);
+});
+
+test('deduplication uses a deterministic total order and prefers complete metadata and images', () => {
+  const sparse = prompt('identical total-order content', {
+    title: '相同中文标题',
+    score: 7,
+    uniqueKey: 'same-key',
+    contributor: '',
+    notes: '',
+    images: ['https://raw.githubusercontent.com/example/gallery/main/sparse.png'],
+  });
+  const complete = prompt('identical total-order content', {
+    title: '相同中文标题',
+    score: 7,
+    uniqueKey: 'same-key',
+    contributor: 'curator',
+    notes: '完整使用说明',
+    images: [
+      'https://raw.githubusercontent.com/example/gallery/main/complete-a.png',
+      'https://raw.githubusercontent.com/example/gallery/main/complete-b.png',
+    ],
+  });
+
+  const forward = prepareCandidates([sparse, complete]);
+  const reversed = prepareCandidates([complete, sparse]);
+
+  assert.deepEqual(forward, reversed);
+  assert.deepEqual(forward[0].images, complete.images);
+  assert.equal(forward[0].notes, complete.notes);
+});
+
+test('publishes only explicit fields and binds normalized identities to content hashes', () => {
+  const first = normalizePromptRecord(prompt('first identity content', {
+    id: '  shared-id  ',
+    uniqueKey: '   ',
+    internalSecret: 'must-not-leak',
+    parserState: { raw: true },
+  }));
+  const second = normalizePromptRecord(prompt('second identity content', {
+    id: 'shared-id',
+    uniqueKey: '',
+    internalSecret: 'must-not-leak',
+  }));
+
+  assert.match(first.id, /^shared-id-[a-f0-9]{64}$/);
+  assert.equal(first.uniqueKey, first.id);
+  assert.match(second.id, /^shared-id-[a-f0-9]{64}$/);
+  assert.equal(second.uniqueKey, second.id);
+  assert.notEqual(first.id, second.id);
+  assert.deepEqual(Object.keys(first).sort(), [
+    'category',
+    'content',
+    'contentHash',
+    'contributor',
+    'id',
+    'images',
+    'notes',
+    'score',
+    'source',
+    'sourceUrl',
+    'tags',
+    'title',
+    'uniqueKey',
+  ]);
+  assert.equal(Object.hasOwn(first, 'internalSecret'), false);
+  assert.equal(Object.hasOwn(first, 'parserState'), false);
 });
 
 function buildCandidatePool(count, options = {}) {
@@ -207,6 +304,35 @@ test('selects 1000 deterministically with source and category soft caps', () => 
   );
   assert.ok([...countBy(first, 'source').values()].every(count => count <= 400));
   assert.ok([...countBy(first, 'category').values()].every(count => count <= 250));
+});
+
+test('precompiles blacklist matchers once per prepare and select batch', () => {
+  const candidates = buildCandidatePool(50);
+  let prepareConversions = 0;
+  let selectConversions = 0;
+  const prepareKeyword = {
+    toString() {
+      prepareConversions += 1;
+      return 'never blocked phrase';
+    },
+  };
+  const selectKeyword = {
+    toString() {
+      selectConversions += 1;
+      return 'another absent phrase';
+    },
+  };
+
+  assert.equal(prepareCandidates(candidates, { blacklist: [prepareKeyword] }).length, 50);
+  assert.equal(prepareConversions, 1);
+  assert.equal(selectPublishedCandidates(candidates, {
+    blacklist: [selectKeyword],
+    targetCount: 50,
+    minimumCount: 40,
+    sourceCap: 50,
+    categoryCap: 50,
+  }).length, 50);
+  assert.equal(selectConversions, 1);
 });
 
 test('relaxes soft caps only enough to restore the healthy minimum', () => {
@@ -279,6 +405,32 @@ test('recovers a snapshot below 950 directly to the target count', () => {
     next.map(item => item.uniqueKey),
     desired.map(item => item.uniqueKey),
   );
+});
+
+test('keeps sub-950 previous snapshots when the desired pool is also unhealthy', () => {
+  const desired = prepareCandidates(Array.from({ length: 100 }, (_, index) => prompt(
+    `small desired pool ${index}`,
+    {
+      title: `小候选池 ${index}`,
+      uniqueKey: `small-desired-${index}`,
+      images: [`https://raw.githubusercontent.com/example/small/main/${index}.png`],
+    },
+  )));
+
+  for (const previousCount of [900, 949]) {
+    const previous = prepareCandidates(buildCandidatePool(previousCount));
+    const next = rotatePublished(previous, desired, {
+      targetCount: 1000,
+      minimumCount: 950,
+      maxChanges: 20,
+    });
+
+    assert.equal(next.length, previousCount);
+    assert.deepEqual(
+      next.map(item => item.uniqueKey),
+      previous.map(item => item.uniqueKey),
+    );
+  }
 });
 
 test('summarizes only non-empty categories in deterministic order', () => {

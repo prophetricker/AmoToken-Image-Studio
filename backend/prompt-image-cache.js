@@ -20,6 +20,7 @@ function normalizePromptImageUrl(rawUrl) {
   }
 
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return '';
+  if (parsed.username || parsed.password || parsed.port) return '';
 
   if (parsed.hostname === CCODE_PROXY_HOST) {
     const match = parsed.pathname.match(/^\/https\/raw\.githubusercontent\.com\/(.+)$/);

@@ -25,6 +25,22 @@ test('keeps existing raw GitHub and ccode proxy image compatibility', () => {
   assert.equal(normalizePromptImageUrl(proxied), raw);
 });
 
+test('rejects credentials and non-default ports for every allowed image URL shape', () => {
+  const unsafeUrls = [
+    'https://user:pass@github.com/user-attachments/assets/3a056a8d-904e-4b3e-b0d2-b5122758b7f5',
+    'https://github.com:444/user-attachments/assets/3a056a8d-904e-4b3e-b0d2-b5122758b7f5',
+    'https://user:pass@raw.githubusercontent.com/example/gallery/main/image.png',
+    'https://raw.githubusercontent.com:444/example/gallery/main/image.png',
+    'https://user:pass@proxy.ccode.vip/https/raw.githubusercontent.com/example/gallery/main/image.png',
+    'https://proxy.ccode.vip:444/https/raw.githubusercontent.com/example/gallery/main/image.png',
+  ];
+
+  for (const url of unsafeUrls) {
+    assert.equal(normalizePromptImageUrl(url), '', url);
+    assert.equal(isAllowedPromptImageUrl(url), false, url);
+  }
+});
+
 test('uses a safe response Content-Type extension for extensionless attachments offline', () => {
   const initial = getPromptImageCacheKey(ATTACHMENT_URL);
   const jpeg = getPromptImageCacheKey(ATTACHMENT_URL, 'image/jpeg; charset=binary');
