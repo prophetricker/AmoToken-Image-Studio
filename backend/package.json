@@ -7,7 +7,8 @@
     "start": "node server.js",
     "dev": "node server.js",
     "test": "node --test *.test.js",
-    "lint": "eslint"
+    "lint": "eslint",
+    "prompts:refresh": "node prompt-gallery-cli.js --bundle"
   },
   "dependencies": {
     "better-sqlite3": "^12.11.1",
