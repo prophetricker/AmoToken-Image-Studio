@@ -39,10 +39,16 @@ interface ImageAnnotationEditorProps {
   onSubmit: (annotatedDataUrl: string, prompt: string) => void;
 }
 
+type ImageLoadState =
+  | { src: string; status: 'loading' }
+  | { src: string; status: 'loaded'; naturalSize: { width: number; height: number } }
+  | { src: string; status: 'error' };
+
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const DEFAULT_COLOR = '#e64032';
 const DEFAULT_BRUSH_SIZE = 4;
+const EMPTY_NATURAL_SIZE = { width: 0, height: 0 };
 const ANNO_SWATCHES = [
   '#e64032', '#ff0000', '#f59e0b', '#22c55e',
   '#3b82f6', '#a855f7', '#ec4899', '#ffffff',
@@ -353,9 +359,7 @@ export function ImageAnnotationEditor({ src, title, onClose, onSubmit }: ImageAn
   const [brushSize, setBrushSize] = useState(DEFAULT_BRUSH_SIZE);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [userInput, setUserInput] = useState('');
-  const [imageLoaded, setImageLoaded] = useState(false);
-  const [imageError, setImageError] = useState(false);
-  const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 });
+  const [imageState, setImageState] = useState<ImageLoadState>(() => ({ src, status: 'loading' }));
   const [displaySize, setDisplaySize] = useState({ width: 0, height: 0 });
   const [samplingColor, setSamplingColor] = useState(false);
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
@@ -366,6 +370,12 @@ export function ImageAnnotationEditor({ src, title, onClose, onSubmit }: ImageAn
   const imageElRef = useRef<HTMLImageElement | null>(null);
   const drawingRef = useRef(false);
   const draftRef = useRef<Annotation | null>(null);
+
+  const imageLoaded = imageState.src === src && imageState.status === 'loaded';
+  const imageError = imageState.src === src && imageState.status === 'error';
+  const naturalSize = imageState.src === src && imageState.status === 'loaded'
+    ? imageState.naturalSize
+    : EMPTY_NATURAL_SIZE;
 
   // ── Body scroll lock (same as GifFrameTuner) ──
   useEffect(() => {
@@ -386,21 +396,21 @@ export function ImageAnnotationEditor({ src, title, onClose, onSubmit }: ImageAn
   // ── Image pre-load (with CORS support for canvas operations) ──
   useEffect(() => {
     let cancelled = false;
-    setImageLoaded(false);
-    setImageError(false);
-    setNaturalSize({ width: 0, height: 0 });
 
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
       if (cancelled) return;
       imageElRef.current = img;
-      setNaturalSize({ width: img.naturalWidth, height: img.naturalHeight });
-      setImageLoaded(true);
+      setImageState({
+        src,
+        status: 'loaded',
+        naturalSize: { width: img.naturalWidth, height: img.naturalHeight },
+      });
     };
     img.onerror = () => {
       if (cancelled) return;
-      setImageError(true);
+      setImageState({ src, status: 'error' });
     };
     img.src = src;
 
@@ -451,9 +461,7 @@ export function ImageAnnotationEditor({ src, title, onClose, onSubmit }: ImageAn
     canvas.style.height = `${displaySize.height}px`;
   }, [displaySize]);
 
-  // ── Redraw function (kept in ref for use in event handlers) ──
-  const redrawRef = useRef<() => void>(() => {});
-  redrawRef.current = () => {
+  const redraw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -468,10 +476,10 @@ export function ImageAnnotationEditor({ src, title, onClose, onSubmit }: ImageAn
     if (draftRef.current) {
       drawAnnotation(ctx, draftRef.current);
     }
-  };
+  }, [annotations]);
 
   // Redraw when annotations or display size change
-  useEffect(() => { redrawRef.current(); }, [annotations, displaySize]);
+  useEffect(() => { redraw(); }, [displaySize, redraw]);
 
   // ── Pointer handlers ──
   const getCanvasPoint = useCallback((e: React.PointerEvent): Point => {
@@ -523,8 +531,8 @@ export function ImageAnnotationEditor({ src, title, onClose, onSubmit }: ImageAn
     } else {
       draftRef.current = { id, type: tool, color, size: brushSize, start: point, end: point };
     }
-    redrawRef.current();
-  }, [tool, color, brushSize, samplingColor, getCanvasPoint, sampleColorAt]);
+    redraw();
+  }, [tool, color, brushSize, samplingColor, getCanvasPoint, sampleColorAt, redraw]);
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     if (!drawingRef.current || !draftRef.current) return;
@@ -534,8 +542,8 @@ export function ImageAnnotationEditor({ src, title, onClose, onSubmit }: ImageAn
     } else {
       draftRef.current.end = point;
     }
-    redrawRef.current();
-  }, [getCanvasPoint]);
+    redraw();
+  }, [getCanvasPoint, redraw]);
 
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
     if (!drawingRef.current || !draftRef.current) return;
@@ -556,9 +564,9 @@ export function ImageAnnotationEditor({ src, title, onClose, onSubmit }: ImageAn
       setAnnotations(prev => [...prev, draft]);
     } else {
       // Too small, discard
-      redrawRef.current();
+      redraw();
     }
-  }, []);
+  }, [redraw]);
 
   const handlePointerLeave = useCallback((e: React.PointerEvent) => {
     if (drawingRef.current) {

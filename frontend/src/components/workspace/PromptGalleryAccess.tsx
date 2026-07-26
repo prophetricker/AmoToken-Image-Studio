@@ -12,13 +12,13 @@ export function usePromptGalleryAccess(
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   const [, setClickCount] = useState(0);
+  const [previousMode, setPreviousMode] = useState(mode);
   const clickTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  useEffect(() => {
-    if (mode === '2') return;
-
-    setShowPromptGallery(mode === '1');
-  }, [mode]);
+  if (mode !== previousMode) {
+    setPreviousMode(mode);
+    if (mode !== '2') setShowPromptGallery(mode === '1');
+  }
 
   const handlePromptGalleryEntry = useCallback(() => {
     if (mode === '3') return;

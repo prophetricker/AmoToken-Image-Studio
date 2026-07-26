@@ -48,6 +48,12 @@ type DialogState = { type: "crop" | "split" | "upscale" | "angle"; nodeId: strin
 
 type HistorySnapshot = { nodes: CanvasNodeData[]; connections: CanvasConnection[] };
 
+type AiTextResponseEvent = {
+  type?: string;
+  delta?: string;
+  response?: { output_text?: string };
+};
+
 type CanvasEditorProps = {
   projectId: string;
   onBack: () => void;
@@ -262,7 +268,6 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
   const clipboard = useRef<CanvasNodeData[]>([]);
   const activeGenerationsRef = useRef<Map<string, AbortController>>(new Map());
   const retryCooldownRef = useRef<Map<string, number>>(new Map());
-  const textGenerationControllersRef = useRef<Map<string, AbortController>>(new Map());
   const [undoStack, setUndoStack] = useState<HistorySnapshot[]>([]);
   const [redoStack, setRedoStack] = useState<HistorySnapshot[]>([]);
 
@@ -1361,8 +1366,8 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
 
       await readSseStream(response.body, controller.signal, (event) => {
         if (!event.data || event.data === "[DONE]") return;
-        let payload: any;
-        try { payload = JSON.parse(event.data); } catch { return; }
+        let payload: AiTextResponseEvent;
+        try { payload = JSON.parse(event.data) as AiTextResponseEvent; } catch { return; }
         const eventType = payload.type || event.event || "";
 
         if (eventType === "response.output_text.delta") {
@@ -1391,7 +1396,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
     } finally {
       setAiTextGenerating(false);
     }
-  }, [aiTextTargetNodeId, onRequireApiKey]);
+  }, [aiTextOriginal, aiTextTargetNodeId, onRequireApiKey]);
 
   const handleAiTextAccept = useCallback(() => {
     const nodeId = aiTextTargetNodeId;
@@ -1414,109 +1419,6 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
     setAiTextGenerating(false);
     setAiTextError(null);
   }, []);
-
-  // ---- AI 文本生成：复用 default agent 文本模型流式生成 ----
-  const handleAiGenerate = useCallback(
-    async (nodeId: string, userPrompt: string) => {
-      let textModel;
-      try {
-        textModel = requireDefaultConfiguredTextModel("agent");
-      } catch {
-        onRequireApiKey();
-        return;
-      }
-
-      // 取消该节点已有的生成
-      textGenerationControllersRef.current.get(nodeId)?.abort();
-      const controller = new AbortController();
-      textGenerationControllersRef.current.set(nodeId, controller);
-
-      // 获取当前节点的现有内容
-      const currentNode = nodes.find((n) => n.id === nodeId);
-      const existingContent = currentNode?.metadata?.content || "";
-
-      patchNode(nodeId, (n) => ({
-        ...n,
-        metadata: { ...n.metadata, isStreaming: true, streamPreview: "", lastError: undefined },
-      }));
-
-      try {
-        const systemPrompt = buildAiTextSystemPrompt(existingContent);
-        const body = {
-          model: textModel.modelId,
-          stream: true,
-          reasoning: { effort: "low" },
-          input: [{ role: "user", content: [{ type: "input_text" as const, text: `${systemPrompt}\n\n---\n\n用户输入：\n${userPrompt}` }] }],
-        };
-
-        const response = await fetch("/api/nova/proxy/text", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            protocol: "openai",
-            baseUrl: textModel.baseUrl,
-            apiKey: textModel.apiKey,
-            model: textModel.modelId,
-            stream: true,
-            requestBody: body,
-          }),
-          signal: controller.signal,
-        });
-
-        if (!response.ok) throw new Error(`生成失败 (${response.status})`);
-        if (!response.body) throw new Error("响应没有可读流");
-
-        let accumulated = "";
-
-        await readSseStream(response.body, controller.signal, (event) => {
-          if (!event.data || event.data === "[DONE]") return;
-          let payload: any;
-          try { payload = JSON.parse(event.data); } catch { return; }
-          const eventType = payload.type || event.event || "";
-
-          if (eventType === "response.output_text.delta") {
-            const delta = typeof payload.delta === "string" ? payload.delta : "";
-            if (delta) {
-              accumulated += delta;
-              patchNode(nodeId, (n) => ({
-                ...n,
-                metadata: { ...n.metadata, streamPreview: accumulated },
-              }));
-            }
-          }
-          if (eventType === "response.completed") {
-            const fullText = payload.response?.output_text;
-            if (typeof fullText === "string" && fullText.length > accumulated.length) {
-              accumulated = fullText;
-            }
-          }
-        });
-
-        if (controller.signal.aborted) return;
-
-        patchNode(nodeId, (n) => ({
-          ...n,
-          metadata: {
-            ...n.metadata,
-            content: accumulated || n.metadata?.content || "",
-            isStreaming: false,
-            streamPreview: undefined,
-          },
-        }));
-      } catch (err) {
-        if (controller.signal.aborted) return;
-        const message = err instanceof Error ? err.message : "AI 生成失败";
-        patchNode(nodeId, (n) => ({
-          ...n,
-          metadata: { ...n.metadata, isStreaming: false, streamPreview: undefined, lastError: message },
-        }));
-        showToast(message, "error");
-      } finally {
-        textGenerationControllersRef.current.delete(nodeId);
-      }
-    },
-    [nodes, patchNode, showToast, onRequireApiKey],
-  );
 
   // ---- 提示词优化：结合连接的上游图片（vision）/ 文字（context） ----
   const handleOptimizePrompt = useCallback(
