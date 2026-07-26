@@ -490,6 +490,7 @@ async function fetchPromptImageWithTimeout(url) {
   try {
     return await fetch(url, {
       signal: controller.signal,
+      redirect: 'error',
       headers: {
         'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
         'User-Agent': 'AmoToken-Nova-PromptGallery/1.0',

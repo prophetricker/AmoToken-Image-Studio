@@ -8,6 +8,12 @@ const {
 } = require('./prompt-image-cache');
 
 const ATTACHMENT_URL = 'https://github.com/user-attachments/assets/3a056a8d-904e-4b3e-b0d2-b5122758b7f5';
+const TRUSTED_EXTERNAL_IMAGES = [
+  'https://i.ibb.co/example/gallery.jpg',
+  'https://files.catbox.moe/example.png',
+  'https://cdn.imgedify.com/imgedify/images/example.jpeg',
+  'https://cms-assets.youmind.com/media/example.webp',
+];
 
 test('allows only UUID-shaped GitHub user attachments on the exact GitHub host', () => {
   assert.equal(isAllowedPromptImageUrl(ATTACHMENT_URL), true);
@@ -23,6 +29,37 @@ test('keeps existing raw GitHub and ccode proxy image compatibility', () => {
   assert.equal(isAllowedPromptImageUrl(raw), true);
   assert.equal(isAllowedPromptImageUrl(proxied), true);
   assert.equal(normalizePromptImageUrl(proxied), raw);
+});
+
+test('allows supported images on the exact trusted external hosts over HTTPS', () => {
+  for (const url of TRUSTED_EXTERNAL_IMAGES) {
+    assert.equal(isAllowedPromptImageUrl(url), true, url);
+  }
+});
+
+test('rejects unsafe variants and untrusted external image hosts', () => {
+  for (const trustedUrl of TRUSTED_EXTERNAL_IMAGES) {
+    const url = new URL(trustedUrl);
+    const pathAndSearch = `${url.pathname}${url.search}`;
+    assert.equal(isAllowedPromptImageUrl(`http://${url.hostname}${pathAndSearch}`), false);
+    assert.equal(isAllowedPromptImageUrl(`https://user:pass@${url.hostname}${pathAndSearch}`), false);
+    assert.equal(isAllowedPromptImageUrl(`https://${url.hostname}:444${pathAndSearch}`), false);
+    assert.equal(isAllowedPromptImageUrl(`https://${url.hostname}/image.svg`), false);
+    assert.equal(isAllowedPromptImageUrl(`https://${url.hostname}/image`), false);
+  }
+
+  const untrustedUrls = [
+    'https://evil-i.ibb.co/example.jpg',
+    'https://i.ibb.co.evil.example/example.jpg',
+    'https://img.shields.io/badge/example-blue.png',
+    'https://x.com/example/image.jpg',
+    'https://youmind.com/example/image.jpg',
+    'https://assets.youmind.com/example/image.jpg',
+    'https://other.example/image.jpg',
+  ];
+  for (const url of untrustedUrls) {
+    assert.equal(isAllowedPromptImageUrl(url), false, url);
+  }
 });
 
 test('rejects credentials and non-default ports for every allowed image URL shape', () => {

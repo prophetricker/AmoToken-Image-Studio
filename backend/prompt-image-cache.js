@@ -4,7 +4,13 @@ const path = require('path');
 const RAW_GITHUB_HOST = 'raw.githubusercontent.com';
 const GITHUB_HOST = 'github.com';
 const CCODE_PROXY_HOST = 'proxy.ccode.vip';
-const ALLOWED_PROMPT_IMAGE_HOSTS = new Set([RAW_GITHUB_HOST]);
+const ALLOWED_PROMPT_IMAGE_HOSTS = new Set([
+  RAW_GITHUB_HOST,
+  'i.ibb.co',
+  'files.catbox.moe',
+  'cdn.imgedify.com',
+  'cms-assets.youmind.com',
+]);
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
 const GITHUB_ATTACHMENT_PATH = /^\/user-attachments\/assets\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
