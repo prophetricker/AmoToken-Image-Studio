@@ -11,6 +11,11 @@ const {
 } = require('./prompt-image-cache');
 const { authorizeImageTaskBilling } = require('./image-billing-context');
 const { fetchImageProductPayload } = require('./image-product-proxy');
+const {
+  createPromptGalleryApi,
+  createPromptGalleryService,
+} = require('./prompt-gallery-service');
+const { PROMPT_GALLERY_SOURCES } = require('./prompt-gallery-sources');
 
 const ENV_FILE_PATH = path.join(process.cwd(), '.env');
 const TASK_STATUS = {
@@ -1718,17 +1723,23 @@ async function handleApi(req, res, pathname) {
     }
 
     if (req.method === 'GET' && apiPathname === '/api/nova/prompts') {
-      const promptsPath = path.join(__dirname, 'prompts.json');
       try {
-        if (!fs.existsSync(promptsPath)) {
-          sendJson(res, 200, []);
-          return true;
-        }
-        const raw = fs.readFileSync(promptsPath, 'utf8');
-        const data = JSON.parse(raw);
-        sendJson(res, 200, Array.isArray(data) ? data : []);
+        sendJson(res, 200, promptGalleryApi.getPrompts());
       } catch {
-        sendJson(res, 200, []);
+        sendJson(res, 500, { error: 'Prompt gallery unavailable' });
+      }
+      return true;
+    }
+
+    if (req.method === 'GET' && apiPathname === '/api/nova/prompts/meta') {
+      try {
+        sendJson(res, 200, promptGalleryApi.getMeta(), {
+          'Cache-Control': 'no-store',
+        });
+      } catch {
+        sendJson(res, 500, { error: 'Prompt gallery unavailable' }, {
+          'Cache-Control': 'no-store',
+        });
       }
       return true;
     }
@@ -2031,6 +2042,22 @@ ensurePromptImageCacheDir();
 cleanupExpiredTasks();
 setInterval(cleanupExpiredTasks, CLEANUP_INTERVAL_MS).unref();
 setInterval(cleanupRateLimitBuckets, CLEANUP_INTERVAL_MS).unref();
+
+const promptGalleryService = createPromptGalleryService({
+  dataDir: process.env.NOVA_PROMPT_GALLERY_DIR
+    || path.join(__dirname, 'data', 'prompt-gallery'),
+  bundledSnapshotPath: path.join(__dirname, 'prompts.json'),
+  blacklistPath: path.join(__dirname, 'blacklist.json'),
+  sources: PROMPT_GALLERY_SOURCES,
+  fetchImpl: fetch,
+  logger: console,
+});
+promptGalleryService.load();
+promptGalleryService.start({
+  initialDelayMs: 60_000,
+  intervalMs: 72 * 60 * 60 * 1000,
+});
+const promptGalleryApi = createPromptGalleryApi(promptGalleryService);
 
 const startServer = () => {
   const wss = setupWebSocketServer();

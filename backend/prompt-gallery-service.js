@@ -9,6 +9,7 @@ const {
   selectPublishedCandidates,
 } = require('./prompt-gallery-policy');
 const { createPromptGalleryStore } = require('./prompt-gallery-store');
+const { isAllowedPromptImageUrl } = require('./prompt-image-cache');
 
 const DEFAULT_TIMEOUT_MS = 25_000;
 const DEFAULT_INITIAL_DELAY_MS = 60_000;
@@ -16,6 +17,12 @@ const DEFAULT_INTERVAL_MS = 72 * 60 * 60 * 1000;
 const DEFAULT_RETRY_DELAY_MS = 5 * 60 * 1000;
 const MINIMUM_PUBLISHED_COUNT = 950;
 const PUBLIC_SOURCE_STATUSES = new Set(['healthy', 'stale', 'failed', 'pending']);
+const EMPTY_PUBLIC_META = Object.freeze({
+  publishedCount: 0,
+  refreshedAt: null,
+  nextRefreshAt: null,
+  sources: Object.freeze([]),
+});
 
 class PromptGalleryRefreshError extends Error {
   constructor(code) {
@@ -55,6 +62,118 @@ function normalizeSourceSnapshot(value) {
   if (!Array.isArray(value) || value.length === 0) return null;
   const normalized = value.map(normalizePromptRecord);
   return normalized.every(Boolean) ? normalized : null;
+}
+
+function publicString(value) {
+  return typeof value === 'string' ? value : '';
+}
+
+function publicStringArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter(item => typeof item === 'string');
+}
+
+function publicUrl(value) {
+  if (typeof value !== 'string') return '';
+  try {
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return '';
+    return value;
+  } catch {
+    return '';
+  }
+}
+
+function publicTimestamp(value) {
+  if (value === null) return null;
+  if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) return null;
+  return value;
+}
+
+function sanitizePublicPrompt(record) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return null;
+  const id = publicString(record.id);
+  const title = publicString(record.title);
+  const content = publicString(record.content);
+  const images = publicStringArray(record.images).filter(isAllowedPromptImageUrl);
+  if (!id || !title || !content || images.length === 0) return null;
+  return {
+    id,
+    title,
+    content,
+    images,
+    tags: publicStringArray(record.tags),
+    contributor: publicString(record.contributor),
+    notes: publicString(record.notes),
+    source: publicString(record.source),
+    sourceUrl: publicUrl(record.sourceUrl),
+    category: publicString(record.category),
+    score: Number.isFinite(record.score) ? record.score : 0,
+    contentHash: publicString(record.contentHash),
+    uniqueKey: publicString(record.uniqueKey),
+  };
+}
+
+function sanitizePublicPrompts(value) {
+  if (!Array.isArray(value)) return [];
+  try {
+    return value.map(sanitizePublicPrompt).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function sanitizePublicSourceMeta(source) {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return null;
+  const status = publicString(source.status);
+  return {
+    id: publicString(source.id),
+    label: publicString(source.label),
+    sourceUrl: publicUrl(source.sourceUrl),
+    license: publicString(source.license),
+    status: PUBLIC_SOURCE_STATUSES.has(status) ? status : 'pending',
+    candidateCount: Number.isFinite(source.candidateCount)
+      ? Math.max(0, Math.trunc(source.candidateCount))
+      : 0,
+    lastSuccessAt: publicTimestamp(source.lastSuccessAt),
+  };
+}
+
+function sanitizePublicMeta(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return cloneJson(EMPTY_PUBLIC_META);
+  }
+  try {
+    return {
+      publishedCount: Number.isFinite(value.publishedCount)
+        ? Math.max(0, Math.trunc(value.publishedCount))
+        : 0,
+      refreshedAt: publicTimestamp(value.refreshedAt),
+      nextRefreshAt: publicTimestamp(value.nextRefreshAt),
+      sources: (Array.isArray(value.sources) ? value.sources : [])
+        .map(sanitizePublicSourceMeta)
+        .filter(Boolean),
+    };
+  } catch {
+    return cloneJson(EMPTY_PUBLIC_META);
+  }
+}
+
+function createPromptGalleryApi(service) {
+  function read(getterName, sanitizer) {
+    let value;
+    try {
+      value = service?.[getterName]?.();
+    } catch {
+      throw new Error('Prompt gallery unavailable');
+    }
+    return sanitizer(value);
+  }
+
+  return {
+    getPrompts: () => read('getPublished', sanitizePublicPrompts),
+    getMeta: () => read('getMeta', sanitizePublicMeta),
+  };
 }
 
 function createPublishedHash(records) {
@@ -591,4 +710,4 @@ function createPromptGalleryService(options) {
   };
 }
 
-module.exports = { createPromptGalleryService };
+module.exports = { createPromptGalleryApi, createPromptGalleryService };
