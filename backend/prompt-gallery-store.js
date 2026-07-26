@@ -12,6 +12,7 @@ function validateSourceId(sourceId) {
 
 function createPromptGalleryStore(dataDir, options = {}) {
   const fsImpl = options.fsImpl || fs;
+  const platform = options.platform || process.platform;
   const root = path.resolve(dataDir);
   const sourcesDir = path.join(root, 'sources');
   const publishedPath = path.join(root, 'published.json');
@@ -37,6 +38,14 @@ function createPromptGalleryStore(dataDir, options = {}) {
       fsImpl.closeSync(fileDescriptor);
       fileDescriptor = undefined;
       fsImpl.renameSync(temporaryPath, targetPath);
+      if (platform !== 'win32') {
+        const directoryDescriptor = fsImpl.openSync(path.dirname(targetPath), 'r');
+        try {
+          fsImpl.fsyncSync(directoryDescriptor);
+        } finally {
+          fsImpl.closeSync(directoryDescriptor);
+        }
+      }
     } catch (error) {
       if (fileDescriptor !== undefined) {
         try {

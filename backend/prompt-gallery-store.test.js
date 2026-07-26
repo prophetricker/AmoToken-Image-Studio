@@ -91,3 +91,42 @@ test('rejects source ids that could escape the data directory', (t) => {
     assert.throws(() => store.loadSource(sourceId), /source id/i, sourceId);
   }
 });
+
+test('fsyncs and closes the parent directory after rename on non-Windows platforms', (t) => {
+  const dataDir = createTempDir();
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  const directoryDescriptors = new Set();
+  let directoryFsyncCount = 0;
+  let directoryCloseCount = 0;
+  const fsImpl = {
+    ...fs,
+    openSync(targetPath, flags, mode) {
+      if (path.resolve(targetPath) === path.resolve(dataDir)) {
+        const descriptor = 987_654;
+        directoryDescriptors.add(descriptor);
+        return descriptor;
+      }
+      return fs.openSync(targetPath, flags, mode);
+    },
+    fsyncSync(descriptor) {
+      if (directoryDescriptors.has(descriptor)) {
+        directoryFsyncCount += 1;
+        return;
+      }
+      return fs.fsyncSync(descriptor);
+    },
+    closeSync(descriptor) {
+      if (directoryDescriptors.has(descriptor)) {
+        directoryCloseCount += 1;
+        return;
+      }
+      return fs.closeSync(descriptor);
+    },
+  };
+  const store = createPromptGalleryStore(dataDir, { fsImpl, platform: 'linux' });
+
+  store.savePublished([{ uniqueKey: 'durable' }]);
+
+  assert.equal(directoryFsyncCount, 1);
+  assert.equal(directoryCloseCount, 1);
+});

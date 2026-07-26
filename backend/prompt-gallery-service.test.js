@@ -3,9 +3,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { createHash } = require('node:crypto');
 
 const { createPromptGalleryStore } = require('./prompt-gallery-store');
 const { createPromptGalleryService } = require('./prompt-gallery-service');
+const { normalizePromptRecord } = require('./prompt-gallery-policy');
 
 const FIXED_NOW = new Date('2026-07-26T04:00:00.000Z');
 
@@ -65,6 +67,17 @@ function promptRecord(sourceId, id) {
   };
 }
 
+function publishedRecords(count, prefix = 'published') {
+  return Array.from({ length: count }, (_, index) => (
+    promptRecord(prefix, `${prefix}-${index}`)
+  ));
+}
+
+function hashPublished(records) {
+  const normalized = records.map(normalizePromptRecord).filter(Boolean);
+  return createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
+}
+
 function response(body, options = {}) {
   const status = options.status ?? 200;
   return {
@@ -73,6 +86,42 @@ function response(body, options = {}) {
     async text() {
       if (options.textError) throw options.textError;
       return body;
+    },
+  };
+}
+
+function createFakeTimers() {
+  const handles = [];
+  const cleared = new Set();
+  return {
+    handles,
+    cleared,
+    timers: {
+      setTimeout(callback, delay) {
+        const handle = {
+          callback,
+          delay,
+          fired: false,
+          unrefCalled: false,
+          unref() {
+            this.unrefCalled = true;
+          },
+        };
+        handles.push(handle);
+        return handle;
+      },
+      clearTimeout(handle) {
+        cleared.add(handle);
+      },
+    },
+    fire(handle) {
+      handle.fired = true;
+      return handle.callback();
+    },
+    activeSchedulerHandles() {
+      return handles.filter(handle => (
+        !handle.fired && !cleared.has(handle) && handle.delay !== 25_000
+      ));
     },
   };
 }
@@ -222,6 +271,38 @@ test('publishes 1000 on the first healthy refresh and rotates at most 20 later',
   assert.ok([...firstHashes].filter(hash => !secondHashes.has(hash)).length <= 20);
 });
 
+test('does not let explicit initial refresh bypass rotation when source state persists', async (t) => {
+  for (const previousCount of [950, 1000]) {
+    await t.test(`${previousCount} published records`, async (subtest) => {
+      const previous = publishedRecords(previousCount, `previous-${previousCount}`);
+      const paths = createPaths(subtest, previous);
+      const store = createPromptGalleryStore(paths.dataDir);
+      const sources = Array.from({ length: 4 }, (_, index) => (
+        createSource(`replacement-${previousCount}-${index}`, 250)
+      ));
+      store.savePublished(previous);
+      store.saveSource(sources[0].id, [promptRecord(sources[0].id, 'persisted-source')]);
+      const service = createService(paths, {
+        sources,
+        async fetchImpl(url) {
+          const source = sources.find(candidate => url.includes(candidate.id));
+          return response(sourceDocument(source.id, 300, 'replacement'));
+        },
+      });
+
+      service.load();
+      const before = service.getPublished();
+      await service.refresh({ initial: true });
+      const after = service.getPublished();
+      const beforeHashes = new Set(before.map(record => record.contentHash));
+      const afterHashes = new Set(after.map(record => record.contentHash));
+
+      assert.ok([...afterHashes].filter(hash => !beforeHashes.has(hash)).length <= 20);
+      assert.ok([...beforeHashes].filter(hash => !afterHashes.has(hash)).length <= 20);
+    });
+  }
+});
+
 test('returns only safe source metadata and refresh summary fields', async (t) => {
   const paths = createPaths(t);
   const source = createSource('source-a');
@@ -259,13 +340,16 @@ test('returns only safe source metadata and refresh summary fields', async (t) =
 test('loads persisted publication before bundle and treats bundle-only cold start as initial fill', async (t) => {
   const bundled = Array.from({ length: 1000 }, (_, index) => promptRecord('bundle', `bundle-${index}`));
   const paths = createPaths(t, bundled);
-  const persisted = [promptRecord('persisted', 'persisted-a')];
+  const persisted = publishedRecords(950, 'persisted');
   const store = createPromptGalleryStore(paths.dataDir);
   store.savePublished(persisted);
   const persistedService = createService(paths, { sources: [], fetchImpl: async () => response('') });
 
   persistedService.load();
-  assert.deepEqual(persistedService.getPublished(), persisted);
+  assert.deepEqual(
+    persistedService.getPublished(),
+    persisted.map(normalizePromptRecord),
+  );
 
   const coldPaths = createPaths(t, bundled);
   const sources = Array.from({ length: 4 }, (_, index) => createSource(`fresh-${index}`, 250));
@@ -285,6 +369,177 @@ test('loads persisted publication before bundle and treats bundle-only cold star
   assert.equal(before.length, 1000);
   assert.equal(after.length, 1000);
   assert.equal(after.filter(record => beforeHashes.has(record.contentHash)).length, 0);
+});
+
+test('loads only normalized healthy publications and rejects invalid source state and dates', (t) => {
+  const bundledRecord = {
+    ...promptRecord('bundle', 'safe-bundle'),
+    privateField: 'must-not-leak',
+  };
+  const paths = createPaths(t, [
+    bundledRecord,
+    null,
+    'not-a-record',
+    { title: 'missing required fields' },
+  ]);
+  const source = createSource('invalid-persisted-source');
+  const store = createPromptGalleryStore(paths.dataDir);
+  store.savePublished(publishedRecords(949, 'too-small'));
+  store.saveSource(source.id, [promptRecord(source.id, 'valid'), null]);
+  store.saveManifest({
+    refreshedAt: 'not-a-date',
+    nextRefreshAt: 'also-not-a-date',
+    sources: [{
+      id: source.id,
+      status: 'healthy',
+      candidateCount: 2,
+      lastSuccessAt: 'invalid-time',
+    }],
+  });
+  const service = createService(paths, { sources: [source], fetchImpl: async () => response('') });
+
+  service.load();
+  const loaded = service.getPublished();
+  const meta = service.getMeta();
+
+  assert.equal(loaded.length, 1);
+  assert.equal(Object.hasOwn(loaded[0], 'privateField'), false);
+  assert.deepEqual(Object.keys(loaded[0]).sort(), [
+    'category',
+    'content',
+    'contentHash',
+    'contributor',
+    'id',
+    'images',
+    'notes',
+    'score',
+    'source',
+    'sourceUrl',
+    'tags',
+    'title',
+    'uniqueKey',
+  ]);
+  assert.equal(meta.refreshedAt, null);
+  assert.equal(meta.nextRefreshAt, null);
+  assert.equal(meta.sources[0].status, 'pending');
+  assert.equal(meta.sources[0].candidateCount, 0);
+  assert.equal(meta.sources[0].lastSuccessAt, null);
+});
+
+test('does not advertise a persisted next refresh time before a scheduler is started', (t) => {
+  const paths = createPaths(t, publishedRecords(1000, 'restart-bundle'));
+  const store = createPromptGalleryStore(paths.dataDir);
+  store.savePublished(publishedRecords(950, 'restart-persisted'));
+  store.saveManifest({
+    refreshedAt: '2026-07-26T03:00:00.000Z',
+    nextRefreshAt: '2099-01-01T00:00:00.000Z',
+    sources: [],
+  });
+  const service = createService(paths, { sources: [], fetchImpl: async () => response('') });
+
+  service.load();
+
+  assert.equal(service.getMeta().refreshedAt, '2026-07-26T03:00:00.000Z');
+  assert.equal(service.getMeta().nextRefreshAt, null);
+});
+
+test('writes and reloads only publication wrappers committed by matching manifests', async (t) => {
+  const bundled = publishedRecords(1000, 'bundle-generation');
+  const paths = createPaths(t, bundled);
+  const sources = Array.from({ length: 4 }, (_, index) => createSource(`wrapper-${index}`, 250));
+  const serviceOptions = {
+    sources,
+    async fetchImpl(url) {
+      const source = sources.find(candidate => url.includes(candidate.id));
+      return response(sourceDocument(source.id, 300, 'wrapper'));
+    },
+  };
+  const service = createService(paths, serviceOptions);
+
+  service.load();
+  await service.refresh({ initial: true });
+  const store = createPromptGalleryStore(paths.dataDir);
+  const publication = store.loadPublished();
+  const manifest = store.loadManifest();
+
+  assert.equal(publication.version, 1);
+  assert.equal(typeof publication.publicationGeneration, 'string');
+  assert.ok(publication.publicationGeneration.length > 0);
+  assert.match(publication.publishedHash, /^[a-f0-9]{64}$/);
+  assert.equal(publication.publishedHash, hashPublished(publication.prompts));
+  assert.equal(publication.prompts.length, 1000);
+  assert.equal(manifest.publicationGeneration, publication.publicationGeneration);
+  assert.equal(manifest.publishedHash, publication.publishedHash);
+
+  const reloaded = createService(paths, serviceOptions);
+  reloaded.load();
+  assert.equal(reloaded.getPublished().length, 1000);
+  assert.deepEqual(
+    reloaded.getPublished().map(record => record.contentHash),
+    publication.prompts.map(record => record.contentHash),
+  );
+
+  publication.prompts[0].title = 'tampered after commit';
+  store.savePublished(publication);
+  const tamperedReload = createService(paths, serviceOptions);
+  tamperedReload.load();
+  assert.equal(tamperedReload.getPublished()[0].source, 'bundle-generation');
+
+  publication.publishedHash = hashPublished(publication.prompts);
+  publication.publicationGeneration = `${manifest.publicationGeneration}-mismatch`;
+  store.savePublished(publication);
+  const generationMismatchReload = createService(paths, serviceOptions);
+  generationMismatchReload.load();
+  assert.equal(generationMismatchReload.getPublished()[0].source, 'bundle-generation');
+});
+
+test('does not advance public memory unless publication and manifest both commit', async (t) => {
+  for (const failurePoint of ['published', 'manifest']) {
+    await t.test(`${failurePoint} write failure`, async (subtest) => {
+      const bundled = publishedRecords(1000, `old-${failurePoint}`);
+      const paths = createPaths(subtest, bundled);
+      const realStore = createPromptGalleryStore(paths.dataDir);
+      const sources = Array.from({ length: 4 }, (_, index) => (
+        createSource(`${failurePoint}-source-${index}`, 250)
+      ));
+      const failingStore = {
+        loadSource: id => realStore.loadSource(id),
+        saveSource: (id, records) => realStore.saveSource(id, records),
+        loadPublished: () => realStore.loadPublished(),
+        savePublished(value) {
+          if (failurePoint === 'published') throw new Error('published write failed');
+          realStore.savePublished(value);
+        },
+        loadManifest: () => realStore.loadManifest(),
+        saveManifest(value) {
+          if (failurePoint === 'manifest') throw new Error('manifest write failed');
+          realStore.saveManifest(value);
+        },
+      };
+      const serviceOptions = {
+        store: failingStore,
+        sources,
+        async fetchImpl(url) {
+          const source = sources.find(candidate => url.includes(candidate.id));
+          return response(sourceDocument(source.id, 300, 'new-generation'));
+        },
+      };
+      const service = createService(paths, serviceOptions);
+      service.load();
+      const beforePublished = service.getPublished();
+      const beforeMeta = service.getMeta();
+
+      await assert.rejects(() => service.refresh({ initial: true }), /write failed/);
+
+      assert.deepEqual(service.getPublished(), beforePublished);
+      assert.deepEqual(service.getMeta(), beforeMeta);
+      if (failurePoint === 'manifest') {
+        const reloaded = createService(paths, { ...serviceOptions, store: realStore });
+        reloaded.load();
+        assert.deepEqual(reloaded.getPublished(), beforePublished);
+      }
+    });
+  }
 });
 
 test('persists successful source snapshots before publication and manifest', async (t) => {
@@ -332,7 +587,7 @@ test('persists successful source snapshots before publication and manifest', asy
   ]);
 });
 
-test('aborts timed-out direct and proxy attempts and retains last-good', async (t) => {
+test('aborts timed-out response bodies after headers and retains last-good', async (t) => {
   const paths = createPaths(t);
   const source = createSource('timeout-source');
   const store = createPromptGalleryStore(paths.dataDir);
@@ -341,13 +596,19 @@ test('aborts timed-out direct and proxy attempts and retains last-good', async (
   const service = createService(paths, {
     sources: [source],
     timeoutMs: 5,
-    fetchImpl(_url, { signal }) {
-      return new Promise((resolve, reject) => {
-        signal.addEventListener('abort', () => {
-          abortCount += 1;
-          reject(signal.reason || new Error('aborted'));
-        }, { once: true });
-      });
+    async fetchImpl(_url, { signal }) {
+      return {
+        ok: true,
+        status: 200,
+        text() {
+          return new Promise((resolve, reject) => {
+            signal.addEventListener('abort', () => {
+              abortCount += 1;
+              reject(signal.reason || new Error('aborted'));
+            }, { once: true });
+          });
+        },
+      };
     },
   });
 
@@ -420,6 +681,161 @@ test('scheduler is unrefed, repeats after completion, clears timers, and prevent
 
   service.stop();
   assert.equal(cleared.has(intervalHandle), true);
+});
+
+test('scheduler generation prevents an old pending callback from replacing a restarted timer', async (t) => {
+  const paths = createPaths(t, publishedRecords(1000, 'epoch-bundle'));
+  const source = createSource('epoch-source');
+  const fake = createFakeTimers();
+  let releaseFetch;
+  const service = createService(paths, {
+    sources: [source],
+    timers: fake.timers,
+    fetchImpl() {
+      return new Promise(resolve => {
+        releaseFetch = () => resolve(response(sourceDocument(source.id, 1)));
+      });
+    },
+  });
+  service.load();
+  service.start({ initialDelayMs: 100, intervalMs: 1000, retryDelayMs: 250 });
+  const oldInitial = fake.activeSchedulerHandles()[0];
+
+  const oldRun = fake.fire(oldInitial);
+  await Promise.resolve();
+  assert.equal(typeof releaseFetch, 'function');
+  service.stop();
+  service.start({ initialDelayMs: 100, intervalMs: 1000, retryDelayMs: 250 });
+  const newInitial = fake.activeSchedulerHandles()[0];
+  const restartedNextRefreshAt = service.getMeta().nextRefreshAt;
+  assert.notEqual(newInitial, oldInitial);
+
+  releaseFetch();
+  await oldRun;
+
+  assert.deepEqual(fake.activeSchedulerHandles(), [newInitial]);
+  assert.equal(service.getMeta().nextRefreshAt, restartedNextRefreshAt);
+  service.stop();
+  assert.deepEqual(fake.activeSchedulerHandles(), []);
+});
+
+test('scheduler keeps the next interval when its callback joins a manual refresh in flight', async (t) => {
+  const startMs = Date.parse('2026-07-26T04:00:00.000Z');
+  let nowMs = startMs;
+  const paths = createPaths(t, publishedRecords(1000, 'joined-bundle'));
+  const source = createSource('joined-source');
+  const fake = createFakeTimers();
+  let releaseFetch;
+  let fetchCount = 0;
+  const service = createService(paths, {
+    sources: [source],
+    timers: fake.timers,
+    now: () => new Date(nowMs),
+    fetchImpl() {
+      fetchCount += 1;
+      return new Promise(resolve => {
+        releaseFetch = () => resolve(response(sourceDocument(source.id, 1)));
+      });
+    },
+  });
+  service.load();
+  service.start({ initialDelayMs: 100, intervalMs: 1000, retryDelayMs: 250 });
+  const initial = fake.activeSchedulerHandles()[0];
+  const manualRefresh = service.refresh();
+  await Promise.resolve();
+  assert.equal(typeof releaseFetch, 'function');
+  nowMs += 100;
+
+  const scheduledRefresh = fake.fire(initial);
+  await Promise.resolve();
+  releaseFetch();
+  await Promise.all([manualRefresh, scheduledRefresh]);
+
+  const expectedNext = new Date(nowMs + 1000).toISOString();
+  assert.equal(fetchCount, 1);
+  assert.equal(service.getMeta().nextRefreshAt, expectedNext);
+  assert.equal(createPromptGalleryStore(paths.dataDir).loadManifest().nextRefreshAt, expectedNext);
+  assert.equal(fake.activeSchedulerHandles()[0].delay, 1000);
+  service.stop();
+});
+
+test('scheduler commits the planned absolute next time and manual refresh preserves it', async (t) => {
+  const startMs = Date.parse('2026-07-26T04:00:00.000Z');
+  let nowMs = startMs;
+  const paths = createPaths(t, publishedRecords(1000, 'planned-bundle'));
+  const source = createSource('planned-source');
+  const fake = createFakeTimers();
+  const service = createService(paths, {
+    sources: [source],
+    timers: fake.timers,
+    now: () => new Date(nowMs),
+    async fetchImpl() {
+      nowMs += 400;
+      return response(sourceDocument(source.id, 1));
+    },
+  });
+  service.load();
+  service.start({ initialDelayMs: 100, intervalMs: 1000, retryDelayMs: 250 });
+  const initial = fake.activeSchedulerHandles()[0];
+  nowMs += 100;
+  const triggerMs = nowMs;
+
+  await fake.fire(initial);
+
+  const expectedNext = new Date(triggerMs + 1000).toISOString();
+  const store = createPromptGalleryStore(paths.dataDir);
+  assert.equal(service.getMeta().nextRefreshAt, expectedNext);
+  assert.equal(store.loadManifest().nextRefreshAt, expectedNext);
+  const intervalTimer = fake.activeSchedulerHandles()[0];
+  assert.equal(intervalTimer.delay, 600);
+
+  await service.refresh();
+
+  assert.equal(service.getMeta().nextRefreshAt, expectedNext);
+  assert.equal(store.loadManifest().nextRefreshAt, expectedNext);
+  assert.deepEqual(fake.activeSchedulerHandles(), [intervalTimer]);
+  service.stop();
+});
+
+test('scheduler uses a short retry after refresh commit failure', async (t) => {
+  const startMs = Date.parse('2026-07-26T04:00:00.000Z');
+  let nowMs = startMs;
+  const paths = createPaths(t, publishedRecords(1000, 'retry-bundle'));
+  const source = createSource('retry-source');
+  const fake = createFakeTimers();
+  const realStore = createPromptGalleryStore(paths.dataDir);
+  const failingStore = {
+    loadSource: id => realStore.loadSource(id),
+    saveSource: (id, records) => realStore.saveSource(id, records),
+    loadPublished: () => realStore.loadPublished(),
+    savePublished: value => realStore.savePublished(value),
+    loadManifest: () => realStore.loadManifest(),
+    saveManifest() {
+      throw new Error('manifest unavailable');
+    },
+  };
+  const service = createService(paths, {
+    store: failingStore,
+    sources: [source],
+    timers: fake.timers,
+    now: () => new Date(nowMs),
+    fetchImpl: async () => response(sourceDocument(source.id, 1)),
+  });
+  service.load();
+  service.start({ initialDelayMs: 100, intervalMs: 1000, retryDelayMs: 250 });
+  const initial = fake.activeSchedulerHandles()[0];
+  nowMs += 100;
+
+  await fake.fire(initial);
+
+  const retryTimer = fake.activeSchedulerHandles()[0];
+  assert.equal(retryTimer.delay, 250);
+  assert.equal(
+    service.getMeta().nextRefreshAt,
+    new Date(nowMs + 250).toISOString(),
+  );
+  service.stop();
+  assert.deepEqual(fake.activeSchedulerHandles(), []);
 });
 
 test('refresh fetches only declared text documents and getters return defensive clones', async (t) => {

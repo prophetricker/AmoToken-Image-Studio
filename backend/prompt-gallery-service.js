@@ -1,7 +1,9 @@
 const fs = require('node:fs');
+const { createHash, randomUUID } = require('node:crypto');
 
 const { parseSourceDocuments } = require('./prompt-gallery-parsers');
 const {
+  normalizePromptRecord,
   prepareCandidates,
   rotatePublished,
   selectPublishedCandidates,
@@ -11,6 +13,8 @@ const { createPromptGalleryStore } = require('./prompt-gallery-store');
 const DEFAULT_TIMEOUT_MS = 25_000;
 const DEFAULT_INITIAL_DELAY_MS = 60_000;
 const DEFAULT_INTERVAL_MS = 72 * 60 * 60 * 1000;
+const DEFAULT_RETRY_DELAY_MS = 5 * 60 * 1000;
+const MINIMUM_PUBLISHED_COUNT = 950;
 const PUBLIC_SOURCE_STATUSES = new Set(['healthy', 'stale', 'failed', 'pending']);
 
 class PromptGalleryRefreshError extends Error {
@@ -36,9 +40,38 @@ function asArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
-function asIsoTime(value) {
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
+function normalizeTimestamp(value) {
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function normalizePublishedRecords(value) {
+  if (!Array.isArray(value)) return null;
+  return value.map(normalizePromptRecord).filter(Boolean);
+}
+
+function normalizeSourceSnapshot(value) {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const normalized = value.map(normalizePromptRecord);
+  return normalized.every(Boolean) ? normalized : null;
+}
+
+function createPublishedHash(records) {
+  return createHash('sha256').update(JSON.stringify(records)).digest('hex');
+}
+
+function isCommittedPublication(publication, manifest, normalizedRecords) {
+  if (!publication || typeof publication !== 'object' || Array.isArray(publication)) return false;
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) return false;
+  if (publication.version !== 1) return false;
+  if (typeof publication.publicationGeneration !== 'string'
+    || !publication.publicationGeneration) return false;
+  if (!/^[a-f0-9]{64}$/.test(publication.publishedHash || '')) return false;
+  if (normalizedRecords.length < MINIMUM_PUBLISHED_COUNT) return false;
+  if (manifest.publicationGeneration !== publication.publicationGeneration) return false;
+  if (manifest.publishedHash !== publication.publishedHash) return false;
+  return createPublishedHash(normalizedRecords) === publication.publishedHash;
 }
 
 function createPromptGalleryService(options) {
@@ -55,8 +88,8 @@ function createPromptGalleryService(options) {
     timers = { setTimeout, clearTimeout },
   } = options || {};
   const sources = configuredSources.filter(source => source?.enabled !== false);
-  const sourceSnapshots = new Map();
-  const sourceStates = new Map();
+  let sourceSnapshots = new Map();
+  let sourceStates = new Map();
   let published = [];
   let refreshedAt = null;
   let nextRefreshAt = null;
@@ -66,9 +99,17 @@ function createPromptGalleryService(options) {
   let schedulerTimer = null;
   let schedulerRunning = false;
   let schedulerIntervalMs = DEFAULT_INTERVAL_MS;
+  let schedulerRetryDelayMs = DEFAULT_RETRY_DELAY_MS;
+  let schedulerGeneration = 0;
+
+  function currentDate() {
+    const value = now();
+    const date = value instanceof Date ? new Date(value.getTime()) : new Date(value);
+    return Number.isNaN(date.getTime()) ? new Date() : date;
+  }
 
   function currentTime() {
-    return asIsoTime(now());
+    return currentDate().toISOString();
   }
 
   function safeWarn(message, details) {
@@ -87,43 +128,74 @@ function createPromptGalleryService(options) {
       license: source.license,
       status: PUBLIC_SOURCE_STATUSES.has(state.status) ? state.status : 'pending',
       candidateCount: Number.isFinite(state.candidateCount) ? state.candidateCount : 0,
-      lastSuccessAt: typeof state.lastSuccessAt === 'string' ? state.lastSuccessAt : null,
+      lastSuccessAt: normalizeTimestamp(state.lastSuccessAt),
+    };
+  }
+
+  function loadPublication(rawPublication, rawManifest, bundled) {
+    const bundledRecords = normalizePublishedRecords(
+      Array.isArray(bundled) ? bundled : bundled?.prompts,
+    ) || [];
+    if (Array.isArray(rawPublication)) {
+      const legacyRecords = normalizePublishedRecords(rawPublication) || [];
+      if (legacyRecords.length >= MINIMUM_PUBLISHED_COUNT) {
+        return {
+          records: legacyRecords,
+          generation: null,
+          hash: createPublishedHash(legacyRecords),
+          manifest: rawManifest && typeof rawManifest === 'object' ? rawManifest : null,
+        };
+      }
+    } else {
+      const wrapperRecords = normalizePublishedRecords(rawPublication?.prompts) || [];
+      if (isCommittedPublication(rawPublication, rawManifest, wrapperRecords)) {
+        return {
+          records: wrapperRecords,
+          generation: rawPublication.publicationGeneration,
+          hash: rawPublication.publishedHash,
+          manifest: rawManifest,
+        };
+      }
+    }
+    return {
+      records: bundledRecords,
+      generation: null,
+      hash: createPublishedHash(bundledRecords),
+      manifest: null,
     };
   }
 
   function load() {
-    const persistedPublished = store.loadPublished();
+    const rawManifest = store.loadManifest();
+    const rawPublication = store.loadPublished();
     const bundled = readJsonFile(bundledSnapshotPath);
-    published = Array.isArray(persistedPublished)
-      ? persistedPublished
-      : asArray(Array.isArray(bundled) ? bundled : bundled?.prompts);
-
-    const manifest = store.loadManifest();
+    const loadedPublication = loadPublication(rawPublication, rawManifest, bundled);
+    const trustedManifest = loadedPublication.manifest;
     const manifestSources = new Map(
-      asArray(manifest?.sources).map(source => [source?.id, source]),
+      asArray(trustedManifest?.sources).map(source => [source?.id, source]),
     );
-    refreshedAt = typeof manifest?.refreshedAt === 'string' ? manifest.refreshedAt : null;
-    nextRefreshAt = typeof manifest?.nextRefreshAt === 'string' ? manifest.nextRefreshAt : null;
+
+    published = loadedPublication.records;
+    refreshedAt = normalizeTimestamp(trustedManifest?.refreshedAt);
+    nextRefreshAt = null;
+    sourceSnapshots = new Map();
+    sourceStates = new Map();
     hasPersistentSourceState = false;
-    sourceSnapshots.clear();
-    sourceStates.clear();
 
     for (const source of sources) {
-      const snapshot = store.loadSource(source.id);
+      const snapshot = normalizeSourceSnapshot(store.loadSource(source.id));
       const persistedState = manifestSources.get(source.id) || {};
-      if (Array.isArray(snapshot)) {
+      if (snapshot) {
         sourceSnapshots.set(source.id, snapshot);
         hasPersistentSourceState = true;
       }
       sourceStates.set(source.id, {
-        status: PUBLIC_SOURCE_STATUSES.has(persistedState.status)
+        status: snapshot && PUBLIC_SOURCE_STATUSES.has(persistedState.status)
           ? persistedState.status
-          : (Array.isArray(snapshot) ? 'stale' : 'pending'),
-        candidateCount: Array.isArray(snapshot) ? snapshot.length : 0,
-        lastSuccessAt: typeof persistedState.lastSuccessAt === 'string'
-          ? persistedState.lastSuccessAt
-          : null,
-        failureCode: typeof persistedState.failureCode === 'string'
+          : (snapshot ? 'stale' : 'pending'),
+        candidateCount: snapshot ? snapshot.length : 0,
+        lastSuccessAt: snapshot ? normalizeTimestamp(persistedState.lastSuccessAt) : null,
+        failureCode: snapshot && typeof persistedState.failureCode === 'string'
           ? persistedState.failureCode
           : null,
       });
@@ -161,9 +233,9 @@ function createPromptGalleryService(options) {
     throw new PromptGalleryRefreshError('fetch_failed');
   }
 
-  async function refreshSource(source, refreshTime) {
-    const previous = sourceSnapshots.get(source.id);
-    const previousState = sourceStates.get(source.id) || {};
+  async function refreshSource(source, refreshTime, stagedSnapshots, stagedStates) {
+    const previous = stagedSnapshots.get(source.id);
+    const previousState = stagedStates.get(source.id) || {};
     try {
       const documents = [];
       for (const document of asArray(source.documents)) {
@@ -191,19 +263,18 @@ function createPromptGalleryService(options) {
       } catch {
         throw new PromptGalleryRefreshError('persist_failed');
       }
-      sourceSnapshots.set(source.id, candidates);
-      sourceStates.set(source.id, {
+      stagedSnapshots.set(source.id, candidates);
+      stagedStates.set(source.id, {
         status: 'healthy',
         candidateCount: candidates.length,
         lastSuccessAt: refreshTime,
         failureCode: null,
       });
-      return;
     } catch (error) {
       const failureCode = error instanceof PromptGalleryRefreshError
         ? error.code
         : 'refresh_failed';
-      sourceStates.set(source.id, {
+      stagedStates.set(source.id, {
         status: Array.isArray(previous) ? 'stale' : 'failed',
         candidateCount: Array.isArray(previous) ? previous.length : 0,
         lastSuccessAt: previousState.lastSuccessAt || null,
@@ -216,13 +287,13 @@ function createPromptGalleryService(options) {
     }
   }
 
-  async function refreshSources(refreshTime) {
+  async function refreshSources(refreshTime, stagedSnapshots, stagedStates) {
     let cursor = 0;
     async function worker() {
       while (cursor < sources.length) {
         const source = sources[cursor];
         cursor += 1;
-        await refreshSource(source, refreshTime);
+        await refreshSource(source, refreshTime, stagedSnapshots, stagedStates);
       }
     }
     const workerCount = Math.min(2, sources.length);
@@ -234,14 +305,37 @@ function createPromptGalleryService(options) {
     return Array.isArray(blacklist) || Array.isArray(blacklist?.keywords) ? blacklist : [];
   }
 
-  function createManifest(refreshTime) {
+  function cloneStateMap(value) {
+    return new Map([...value].map(([key, state]) => [key, { ...state }]));
+  }
+
+  function resolveRefreshNext(refreshOptions) {
+    const isCurrentScheduledRefresh = schedulerRunning
+      && refreshOptions.schedulerGeneration === schedulerGeneration;
+    if (!isCurrentScheduledRefresh) return nextRefreshAt;
+    const planned = normalizeTimestamp(refreshOptions.plannedNextRefreshAt);
+    const nowMs = currentDate().getTime();
+    if (planned && Date.parse(planned) > nowMs) return planned;
+    return new Date(nowMs + schedulerIntervalMs).toISOString();
+  }
+
+  function createManifest({
+    records,
+    generation,
+    hash,
+    refreshTime,
+    stagedNextRefreshAt,
+    stagedStates,
+  }) {
     return {
       version: 1,
-      publishedCount: published.length,
+      publicationGeneration: generation,
+      publishedHash: hash,
+      publishedCount: records.length,
       refreshedAt: refreshTime,
-      nextRefreshAt,
+      nextRefreshAt: stagedNextRefreshAt,
       sources: sources.map((source) => {
-        const state = sourceStates.get(source.id) || {};
+        const state = stagedStates.get(source.id) || {};
         return {
           ...sourceMetadata(source, state),
           failureCode: state.failureCode || null,
@@ -252,34 +346,60 @@ function createPromptGalleryService(options) {
 
   async function performRefresh(refreshOptions = {}) {
     if (!loaded) load();
-    const initialFill = Boolean(refreshOptions.initial) || !hasPersistentSourceState;
+    const initialFill = !hasPersistentSourceState;
     const refreshTime = currentTime();
-    await refreshSources(refreshTime);
+    const stagedSnapshots = new Map(sourceSnapshots);
+    const stagedStates = cloneStateMap(sourceStates);
+    await refreshSources(refreshTime, stagedSnapshots, stagedStates);
 
-    const merged = sources.flatMap(source => asArray(sourceSnapshots.get(source.id)));
+    // Source snapshots are independently durable even if publication commit fails.
+    sourceSnapshots = stagedSnapshots;
+    hasPersistentSourceState = sources.some(source => stagedSnapshots.has(source.id));
+
+    const merged = sources.flatMap(source => asArray(stagedSnapshots.get(source.id)));
     const blacklist = loadBlacklist();
     const prepared = prepareCandidates(merged, { blacklist });
     const desired = selectPublishedCandidates(prepared, {
       blacklist,
       targetCount: 1000,
-      minimumCount: 950,
+      minimumCount: MINIMUM_PUBLISHED_COUNT,
       sourceCap: 400,
       categoryCap: 250,
     });
     const nextPublished = initialFill
-      ? (desired.length >= 950 ? desired : published)
+      ? (desired.length >= MINIMUM_PUBLISHED_COUNT ? desired : published)
       : rotatePublished(published, desired, {
         blacklist,
         targetCount: 1000,
-        minimumCount: 950,
+        minimumCount: MINIMUM_PUBLISHED_COUNT,
         maxChanges: 20,
       });
+    const normalizedNext = normalizePublishedRecords(nextPublished) || [];
+    const nextGeneration = randomUUID();
+    const nextHash = createPublishedHash(normalizedNext);
+    const stagedNextRefreshAt = resolveRefreshNext(refreshOptions);
+    const publication = {
+      version: 1,
+      publicationGeneration: nextGeneration,
+      publishedHash: nextHash,
+      prompts: normalizedNext,
+    };
+    const manifest = createManifest({
+      records: normalizedNext,
+      generation: nextGeneration,
+      hash: nextHash,
+      refreshTime,
+      stagedNextRefreshAt,
+      stagedStates,
+    });
 
-    store.savePublished(nextPublished);
-    published = nextPublished;
+    store.savePublished(publication);
+    store.saveManifest(manifest);
+
+    published = normalizedNext;
     refreshedAt = refreshTime;
-    hasPersistentSourceState = sources.some(source => sourceSnapshots.has(source.id));
-    store.saveManifest(createManifest(refreshTime));
+    nextRefreshAt = stagedNextRefreshAt;
+    sourceStates = stagedStates;
     return getMeta();
   }
 
@@ -291,36 +411,71 @@ function createPromptGalleryService(options) {
     return refreshPromise;
   }
 
-  function schedule(delayMs) {
-    nextRefreshAt = new Date(new Date(currentTime()).getTime() + delayMs).toISOString();
-    schedulerTimer = timers.setTimeout(async () => {
-      schedulerTimer = null;
-      if (!schedulerRunning) return;
+  function scheduleAt(targetTime, epoch) {
+    if (!schedulerRunning || epoch !== schedulerGeneration) return null;
+    const nowMs = currentDate().getTime();
+    let targetMs = Date.parse(targetTime);
+    if (!Number.isFinite(targetMs) || targetMs <= nowMs) targetMs = nowMs + 1;
+    nextRefreshAt = new Date(targetMs).toISOString();
+    const delayMs = targetMs - nowMs;
+    let handle;
+    handle = timers.setTimeout(async () => {
+      if (!schedulerRunning || epoch !== schedulerGeneration) return;
+      if (schedulerTimer === handle) schedulerTimer = null;
+      const plannedNextRefreshAt = new Date(
+        currentDate().getTime() + schedulerIntervalMs,
+      ).toISOString();
+      nextRefreshAt = plannedNextRefreshAt;
+      let succeeded = false;
       try {
-        await refresh();
+        await refresh({
+          schedulerGeneration: epoch,
+          plannedNextRefreshAt,
+        });
+        succeeded = true;
       } catch {
         safeWarn('Prompt gallery scheduled refresh failed', { code: 'refresh_failed' });
-      } finally {
-        if (schedulerRunning) schedule(schedulerIntervalMs);
       }
+      if (!schedulerRunning || epoch !== schedulerGeneration) return;
+      const nextTime = succeeded
+        ? nextRefreshAt
+        : new Date(currentDate().getTime() + schedulerRetryDelayMs).toISOString();
+      scheduleAt(nextTime, epoch);
     }, delayMs);
-    schedulerTimer?.unref?.();
-    return schedulerTimer;
+    schedulerTimer = handle;
+    handle?.unref?.();
+    return handle;
+  }
+
+  function clearSchedulerTimer() {
+    if (!schedulerTimer) return;
+    timers.clearTimeout(schedulerTimer);
+    schedulerTimer = null;
   }
 
   function start(startOptions = {}) {
-    stop();
+    schedulerGeneration += 1;
+    clearSchedulerTimer();
     schedulerRunning = true;
-    schedulerIntervalMs = startOptions.intervalMs ?? DEFAULT_INTERVAL_MS;
-    schedule(startOptions.initialDelayMs ?? DEFAULT_INITIAL_DELAY_MS);
+    schedulerIntervalMs = Math.max(1, startOptions.intervalMs ?? DEFAULT_INTERVAL_MS);
+    schedulerRetryDelayMs = Math.max(
+      1,
+      startOptions.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS,
+    );
+    const initialDelayMs = Math.max(
+      1,
+      startOptions.initialDelayMs ?? DEFAULT_INITIAL_DELAY_MS,
+    );
+    scheduleAt(
+      new Date(currentDate().getTime() + initialDelayMs).toISOString(),
+      schedulerGeneration,
+    );
   }
 
   function stop() {
+    schedulerGeneration += 1;
     schedulerRunning = false;
-    if (schedulerTimer) {
-      timers.clearTimeout(schedulerTimer);
-      schedulerTimer = null;
-    }
+    clearSchedulerTimer();
     nextRefreshAt = null;
   }
 
