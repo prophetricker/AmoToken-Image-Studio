@@ -8,13 +8,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   ALL_CATEGORY,
-  fetchPromptBlacklist,
-  fetchStablePromptGallery,
   filterPromptGalleryPrompts,
   getPromptCategories,
   toPromptGalleryImageSrc,
   type PromptWithKey,
 } from '@/lib/prompt-gallery-data';
+import { fetchPromptGallery } from '@/lib/prompt-gallery-client';
 
 const PAGE_SIZE = 12;
 
@@ -33,7 +32,6 @@ export const PromptSelectDialog = memo(function PromptSelectDialog({
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState(ALL_CATEGORY);
-  const [blacklist, setBlacklist] = useState<string[]>([]);
   const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
   const loadMoreRef = useRef<HTMLDivElement>(null);
 
@@ -41,10 +39,9 @@ export const PromptSelectDialog = memo(function PromptSelectDialog({
     if (!open) return;
 
     setLoading(true);
-    Promise.all([fetchStablePromptGallery(), fetchPromptBlacklist()])
-      .then(([result, blacklistKeywords]) => {
-        setAllPrompts(result.prompts);
-        setBlacklist(blacklistKeywords);
+    fetchPromptGallery()
+      .then((prompts) => {
+        setAllPrompts(prompts);
         setLoading(false);
       })
       .catch(() => {
@@ -62,11 +59,10 @@ export const PromptSelectDialog = memo(function PromptSelectDialog({
 
   const visibleCategories = useMemo(() => {
     return getPromptCategories(filterPromptGalleryPrompts(allPrompts, {
-      blacklist,
       searchQuery,
       includeContributorInSearch: false,
     }));
-  }, [allPrompts, blacklist, searchQuery]);
+  }, [allPrompts, searchQuery]);
 
   useEffect(() => {
     if (selectedCategory !== ALL_CATEGORY && !visibleCategories.includes(selectedCategory)) {
@@ -76,12 +72,11 @@ export const PromptSelectDialog = memo(function PromptSelectDialog({
 
   const filteredPrompts = useMemo(() => {
     return filterPromptGalleryPrompts(allPrompts, {
-      blacklist,
       searchQuery,
       selectedCategory,
       includeContributorInSearch: false,
     });
-  }, [allPrompts, blacklist, searchQuery, selectedCategory]);
+  }, [allPrompts, searchQuery, selectedCategory]);
 
   const displayedPrompts = useMemo(() => {
     return filteredPrompts.slice(0, displayCount);

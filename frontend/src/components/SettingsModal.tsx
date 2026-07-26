@@ -40,7 +40,6 @@ import {
   saveAmoTokenToken,
 } from '@/lib/nova-models';
 import { BA_RANDOM_URL, BING_WALLPAPER_URL } from '@/lib/constants';
-import { PROMPT_DATA_SOURCES, getPromptSourceLabel } from '@/lib/prompt-gallery-data';
 import { requestAmoTokenImageToken } from '@/lib/amotoken-key-picker';
 
 interface SettingsModalProps {
@@ -338,13 +337,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
                 数据来源
               </summary>
               <ul className="mt-3 list-inside list-disc space-y-2 text-muted-foreground">
-                {PROMPT_DATA_SOURCES.map(source => (
-                  <li key={source.name}>
-                    <a href={source.sourceUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
-                      {getPromptSourceLabel(source.sourceUrl)} <ExternalLink className="h-3 w-3" />
-                    </a>
-                  </li>
-                ))}
+                <li>提示词广场来源可在广场的“提示词来源”中查看</li>
                 <li>
                   <a href={BA_RANDOM_URL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
                     BA 随机图片 <ExternalLink className="h-3 w-3" />

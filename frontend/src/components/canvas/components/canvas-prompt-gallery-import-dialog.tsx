@@ -9,15 +9,16 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   ALL_CATEGORY,
-  PROMPT_DATA_SOURCES,
-  fetchPromptBlacklist,
-  fetchStablePromptGallery,
   filterPromptGalleryPrompts,
   getPromptCategories,
-  getPromptSourceLabel,
   toPromptGalleryImageSrc,
   type PromptWithKey,
 } from "@/lib/prompt-gallery-data";
+import {
+  fetchPromptGallery,
+  fetchPromptGalleryMeta,
+  type PromptGalleryMeta,
+} from "@/lib/prompt-gallery-client";
 import { cn } from "@/lib/utils";
 
 type CanvasPromptGalleryImportDialogProps = {
@@ -29,22 +30,23 @@ type CanvasPromptGalleryImportDialogProps = {
 
 const PAGE_STEP = 40;
 
-let cachedPromptData: { prompts: PromptWithKey[]; categories: string[] } | null = null;
-let cachedBlacklist: string[] | null = null;
+let cachedPrompts: PromptWithKey[] | null = null;
+let cachedMeta: PromptGalleryMeta | null = null;
 
 async function loadPromptGalleryData() {
-  if (!cachedPromptData) {
-    cachedPromptData = await fetchStablePromptGallery();
-  }
-  if (!cachedBlacklist) {
-    cachedBlacklist = await fetchPromptBlacklist();
-  }
-  return { ...cachedPromptData, blacklist: cachedBlacklist };
+  const [promptsResult, metaResult] = await Promise.allSettled([
+    cachedPrompts ? Promise.resolve(cachedPrompts) : fetchPromptGallery(),
+    cachedMeta ? Promise.resolve(cachedMeta) : fetchPromptGalleryMeta(),
+  ]);
+  if (promptsResult.status === "rejected") throw promptsResult.reason;
+  cachedPrompts = promptsResult.value;
+  if (metaResult.status === "fulfilled") cachedMeta = metaResult.value;
+  return { prompts: cachedPrompts, meta: cachedMeta };
 }
 
 export function CanvasPromptGalleryImportDialog({ open, importing, onOpenChange, onConfirm }: CanvasPromptGalleryImportDialogProps) {
   const [prompts, setPrompts] = useState<PromptWithKey[]>([]);
-  const [blacklist, setBlacklist] = useState<string[]>([]);
+  const [sourceMeta, setSourceMeta] = useState<PromptGalleryMeta | null>(cachedMeta);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -73,10 +75,10 @@ export function CanvasPromptGalleryImportDialog({ open, importing, onOpenChange,
       void loadPromptGalleryData()
         .then((data) => {
           setPrompts(data.prompts);
-          setBlacklist(data.blacklist);
+          setSourceMeta(data.meta);
         })
         .catch((err) => {
-          setError(err instanceof Error ? err.message : "提示词广场加载失败");
+          setError(err instanceof Error ? err.message : "提示词广场暂不可用");
         })
         .finally(() => {
           setLoading(false);
@@ -86,13 +88,12 @@ export function CanvasPromptGalleryImportDialog({ open, importing, onOpenChange,
 
   const visibleCategories = useMemo(() => {
     return getPromptCategories(filterPromptGalleryPrompts(prompts, {
-      blacklist,
       searchQuery: query,
       includeNotesInSearch: true,
       includeTagsInSearch: true,
       includeSourceInSearch: true,
     }));
-  }, [blacklist, prompts, query]);
+  }, [prompts, query]);
 
   useEffect(() => {
     if (selectedCategory !== ALL_CATEGORY && !visibleCategories.includes(selectedCategory)) {
@@ -102,14 +103,13 @@ export function CanvasPromptGalleryImportDialog({ open, importing, onOpenChange,
 
   const filteredPrompts = useMemo(() => {
     return filterPromptGalleryPrompts(prompts, {
-      blacklist,
       searchQuery: query,
       selectedCategory,
       includeNotesInSearch: true,
       includeTagsInSearch: true,
       includeSourceInSearch: true,
     });
-  }, [blacklist, prompts, query, selectedCategory]);
+  }, [prompts, query, selectedCategory]);
 
   const prevFilterKeyRef = useRef(`${query}|${selectedCategory}`);
   useEffect(() => {
@@ -250,21 +250,27 @@ export function CanvasPromptGalleryImportDialog({ open, importing, onOpenChange,
               <ExternalLink className="h-3 w-3" />
             </PopoverTrigger>
             <PopoverContent align="end" className="w-72 p-2">
-              <p className="px-2 pb-1.5 text-xs font-medium text-muted-foreground">提示词来源（{PROMPT_DATA_SOURCES.length}）</p>
-              <div className="space-y-0.5">
-                {PROMPT_DATA_SOURCES.map((source) => (
-                  <a
-                    key={source.name}
-                    href={source.sourceUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted"
-                  >
-                    <span className="truncate">{getPromptSourceLabel(source.sourceUrl)}</span>
-                    <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground" />
-                  </a>
-                ))}
-              </div>
+              {!sourceMeta ? (
+                <p className="px-2 py-1.5 text-sm text-muted-foreground">来源信息暂不可用</p>
+              ) : (
+                <>
+                  <p className="px-2 pb-1.5 text-xs font-medium text-muted-foreground">提示词来源（{sourceMeta.sources.length}）</p>
+                  <div className="space-y-0.5">
+                    {sourceMeta.sources.map((source) => (
+                      <a
+                        key={source.id}
+                        href={source.sourceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted"
+                      >
+                        <span className="truncate">{source.label}</span>
+                        <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground" />
+                      </a>
+                    ))}
+                  </div>
+                </>
+              )}
             </PopoverContent>
           </Popover>
         </div>

@@ -9,14 +9,15 @@ import {
 } from '@/components/prompt-gallery/PromptGallerySubcomponents';
 import {
   ALL_CATEGORY,
-  PROMPT_DATA_SOURCES,
-  fetchPromptBlacklist,
-  fetchStablePromptGallery,
   filterPromptGalleryPrompts,
   getPromptCategories,
-  getPromptSourceLabel,
   type PromptWithKey,
 } from '@/lib/prompt-gallery-data';
+import {
+  fetchPromptGallery,
+  fetchPromptGalleryMeta,
+  type PromptGalleryMeta,
+} from '@/lib/prompt-gallery-client';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { seededShuffle } from '@/lib/seeded-shuffle';
 
@@ -34,8 +35,10 @@ const PromptGallery = memo(function PromptGallery({
   const [allPrompts, setAllPrompts] = useState<PromptWithKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [sourceMeta, setSourceMeta] = useState<PromptGalleryMeta | null>(null);
+  const [sourceMetaLoading, setSourceMetaLoading] = useState(true);
+  const [sourceMetaUnavailable, setSourceMetaUnavailable] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [blacklist, setBlacklist] = useState<string[]>([]);
   const [selectedCategory, setSelectedCategory] = useState(ALL_CATEGORY);
   const [detailPrompt, setDetailPrompt] = useState<PromptWithKey | null>(null);
   const [imagePreview, setImagePreview] = useState<{ prompt: PromptWithKey; initialIndex: number } | null>(null);
@@ -45,17 +48,20 @@ const PromptGallery = memo(function PromptGallery({
   const loadMoreRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fetchPromptBlacklist().then(setBlacklist);
-
-    fetchStablePromptGallery()
-      .then((result) => {
-        setAllPrompts(result.prompts);
+    void fetchPromptGallery()
+      .then((prompts) => {
+        setAllPrompts(prompts);
         setLoading(false);
       })
-      .catch((err) => {
-        setError(err instanceof Error ? err.message : '提示词广场加载失败');
+      .catch(() => {
+        setError('提示词广场暂不可用');
         setLoading(false);
       });
+
+    void fetchPromptGalleryMeta()
+      .then(setSourceMeta)
+      .catch(() => setSourceMetaUnavailable(true))
+      .finally(() => setSourceMetaLoading(false));
   }, []);
 
   const handleShowDetail = useCallback((prompt: PromptWithKey) => {
@@ -76,12 +82,12 @@ const PromptGallery = memo(function PromptGallery({
   }, []);
 
   const baseFilteredPrompts = useMemo(() => {
-    return filterPromptGalleryPrompts(allPrompts, { blacklist, searchQuery, selectedCategory });
-  }, [allPrompts, blacklist, searchQuery, selectedCategory]);
+    return filterPromptGalleryPrompts(allPrompts, { searchQuery, selectedCategory });
+  }, [allPrompts, searchQuery, selectedCategory]);
 
   const visibleCategories = useMemo(() => {
-    return getPromptCategories(filterPromptGalleryPrompts(allPrompts, { blacklist, searchQuery }));
-  }, [allPrompts, blacklist, searchQuery]);
+    return getPromptCategories(filterPromptGalleryPrompts(allPrompts, { searchQuery }));
+  }, [allPrompts, searchQuery]);
 
   useEffect(() => {
     if (selectedCategory !== ALL_CATEGORY && !visibleCategories.includes(selectedCategory)) {
@@ -90,9 +96,9 @@ const PromptGallery = memo(function PromptGallery({
   }, [selectedCategory, visibleCategories]);
 
   const filteredPrompts = useMemo(() => {
-    const seed = `${searchQuery}\0${blacklist.join('\0')}\0${baseFilteredPrompts.map((prompt) => prompt.uniqueKey).join('\0')}`;
+    const seed = `${searchQuery}\0${baseFilteredPrompts.map((prompt) => prompt.uniqueKey).join('\0')}`;
     return seededShuffle(baseFilteredPrompts, seed);
-  }, [baseFilteredPrompts, blacklist, searchQuery]);
+  }, [baseFilteredPrompts, searchQuery]);
 
   useEffect(() => {
     queueMicrotask(() => setDisplayCount(pageStep));
@@ -180,21 +186,29 @@ const PromptGallery = memo(function PromptGallery({
               <ExternalLink className="w-3 h-3" />
             </PopoverTrigger>
             <PopoverContent align="end" className="w-72 p-2">
-              <p className="px-2 pb-1.5 text-xs font-medium text-muted-foreground">提示词来源（{PROMPT_DATA_SOURCES.length}）</p>
-              <div className="space-y-0.5">
-                {PROMPT_DATA_SOURCES.map((source) => (
-                  <a
-                    key={source.name}
-                    href={source.sourceUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted"
-                  >
-                    <span className="truncate">{getPromptSourceLabel(source.sourceUrl)}</span>
-                    <ExternalLink className="w-3 h-3 flex-shrink-0 text-muted-foreground" />
-                  </a>
-                ))}
-              </div>
+              {sourceMetaLoading ? (
+                <p className="px-2 py-1.5 text-sm text-muted-foreground">来源信息加载中</p>
+              ) : sourceMetaUnavailable || !sourceMeta ? (
+                <p className="px-2 py-1.5 text-sm text-muted-foreground">来源信息暂不可用</p>
+              ) : (
+                <>
+                  <p className="px-2 pb-1.5 text-xs font-medium text-muted-foreground">提示词来源（{sourceMeta.sources.length}）</p>
+                  <div className="space-y-0.5">
+                    {sourceMeta.sources.map((source) => (
+                      <a
+                        key={source.id}
+                        href={source.sourceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted"
+                      >
+                        <span className="truncate">{source.label}</span>
+                        <ExternalLink className="w-3 h-3 flex-shrink-0 text-muted-foreground" />
+                      </a>
+                    ))}
+                  </div>
+                </>
+              )}
             </PopoverContent>
           </Popover>
         </div>
