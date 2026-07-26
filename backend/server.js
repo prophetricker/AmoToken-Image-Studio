@@ -8,6 +8,8 @@ const { WebSocketServer } = require('ws');
 const {
   getPromptImageCacheKey,
   isAllowedPromptImageUrl,
+  openPromptImageResponse,
+  readPromptImageBody,
 } = require('./prompt-image-cache');
 const { authorizeImageTaskBilling } = require('./image-billing-context');
 const { fetchImageProductPayload } = require('./image-product-proxy');
@@ -484,23 +486,6 @@ function prunePromptImageCache() {
   }
 }
 
-async function fetchPromptImageWithTimeout(url) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), PROMPT_IMAGE_FETCH_TIMEOUT_MS);
-  try {
-    return await fetch(url, {
-      signal: controller.signal,
-      redirect: 'error',
-      headers: {
-        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-        'User-Agent': 'AmoToken-Nova-PromptGallery/1.0',
-      },
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 async function getCachedPromptImageFile(rawUrl) {
   if (!isAllowedPromptImageUrl(rawUrl)) {
     throw createHttpError(400, 'INVALID_PROMPT_IMAGE_URL', 'Invalid prompt image URL');
@@ -514,24 +499,41 @@ async function getCachedPromptImageFile(rawUrl) {
     return cached;
   }
 
-  const response = await fetchPromptImageWithTimeout(initialKey.normalizedUrl);
-  if (!response.ok) {
-    throw createHttpError(502, 'PROMPT_IMAGE_FETCH_FAILED', `Prompt image fetch failed: ${response.status}`);
-  }
+  const session = await openPromptImageResponse(initialKey.normalizedUrl, {
+    timeoutMs: PROMPT_IMAGE_FETCH_TIMEOUT_MS,
+    headers: {
+      'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+      'User-Agent': 'AmoToken-Nova-PromptGallery/1.0',
+    },
+  });
+  let contentType;
+  let buffer;
+  try {
+    const { response } = session;
+    if (!response.ok) {
+      throw createHttpError(502, 'PROMPT_IMAGE_FETCH_FAILED', `Prompt image fetch failed: ${response.status}`);
+    }
 
-  const contentType = response.headers.get('content-type') || 'image/png';
-  if (!/^image\//i.test(contentType)) {
-    throw createHttpError(415, 'PROMPT_IMAGE_NOT_IMAGE', 'Prompt image response is not an image');
-  }
+    contentType = response.headers.get('content-type') || 'image/png';
+    if (!/^image\//i.test(contentType)) {
+      throw createHttpError(415, 'PROMPT_IMAGE_NOT_IMAGE', 'Prompt image response is not an image');
+    }
 
-  const contentLength = Number(response.headers.get('content-length') || 0);
-  if (contentLength > PROMPT_IMAGE_MAX_BYTES) {
-    throw createHttpError(413, 'PROMPT_IMAGE_TOO_LARGE', 'Prompt image is too large');
-  }
+    const contentLength = Number(response.headers.get('content-length') || 0);
+    if (contentLength > PROMPT_IMAGE_MAX_BYTES) {
+      throw createHttpError(413, 'PROMPT_IMAGE_TOO_LARGE', 'Prompt image is too large');
+    }
 
-  const buffer = Buffer.from(await response.arrayBuffer());
-  if (buffer.length > PROMPT_IMAGE_MAX_BYTES) {
-    throw createHttpError(413, 'PROMPT_IMAGE_TOO_LARGE', 'Prompt image is too large');
+    try {
+      buffer = await readPromptImageBody(response, PROMPT_IMAGE_MAX_BYTES);
+    } catch (error) {
+      if (/too large/i.test(error?.message || '')) {
+        throw createHttpError(413, 'PROMPT_IMAGE_TOO_LARGE', 'Prompt image is too large');
+      }
+      throw error;
+    }
+  } finally {
+    await session.close();
   }
 
   const finalKey = getPromptImageCacheKey(initialKey.normalizedUrl, contentType);

@@ -4,15 +4,18 @@ const path = require('path');
 const RAW_GITHUB_HOST = 'raw.githubusercontent.com';
 const GITHUB_HOST = 'github.com';
 const CCODE_PROXY_HOST = 'proxy.ccode.vip';
+const CATBOX_HOST = 'files.catbox.moe';
+const GITHUB_ASSET_HOST = 'github-production-user-asset-6210df.s3.amazonaws.com';
 const ALLOWED_PROMPT_IMAGE_HOSTS = new Set([
   RAW_GITHUB_HOST,
   'i.ibb.co',
-  'files.catbox.moe',
+  CATBOX_HOST,
   'cdn.imgedify.com',
   'cms-assets.youmind.com',
 ]);
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
 const GITHUB_ATTACHMENT_PATH = /^\/user-attachments\/assets\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 function hasExplicitPortInAuthority(value) {
   const schemeSeparator = value.indexOf('://');
@@ -46,6 +49,7 @@ function normalizePromptImageUrl(rawUrl) {
 
   if (parsed.protocol !== 'https:') return '';
   if (parsed.username || parsed.password || parsed.port) return '';
+  parsed.hash = '';
 
   if (parsed.hostname === CCODE_PROXY_HOST) {
     const match = parsed.pathname.match(/^\/https\/raw\.githubusercontent\.com\/(.+)$/);
@@ -79,6 +83,134 @@ function isAllowedPromptImageUrl(rawUrl) {
 
   const ext = path.extname(parsed.pathname).toLowerCase();
   return IMAGE_EXTENSIONS.has(ext);
+}
+
+function getPromptImageFetchUrl(rawUrl) {
+  const normalized = normalizePromptImageUrl(rawUrl);
+  if (!normalized || !isAllowedPromptImageUrl(normalized)) return '';
+
+  const parsed = new URL(normalized);
+  if (parsed.hostname !== CATBOX_HOST) return normalized;
+  return `https://${CCODE_PROXY_HOST}/https/${CATBOX_HOST}${parsed.pathname}${parsed.search}`;
+}
+
+function resolvePromptImageRedirectUrl(rawInitialUrl, rawLocation) {
+  const initialUrl = normalizePromptImageUrl(rawInitialUrl);
+  if (!initialUrl || !isAllowedPromptImageUrl(initialUrl)) return '';
+
+  const initial = new URL(initialUrl);
+  const attachmentMatch = initial.hostname === GITHUB_HOST
+    ? initial.pathname.match(GITHUB_ATTACHMENT_PATH)
+    : null;
+  if (!attachmentMatch) return '';
+
+  const location = String(rawLocation || '').trim();
+  if (!/^https:\/\//i.test(location) || hasExplicitPortInAuthority(location)) return '';
+
+  let redirect;
+  try {
+    redirect = new URL(location);
+  } catch {
+    return '';
+  }
+  if (
+    redirect.protocol !== 'https:'
+    || redirect.hostname !== GITHUB_ASSET_HOST
+    || redirect.username
+    || redirect.password
+    || redirect.port
+  ) return '';
+
+  const attachmentId = initial.pathname.slice(initial.pathname.lastIndexOf('/') + 1);
+  const escapedId = attachmentId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const assetPath = new RegExp(`^/\\d+/\\d+-${escapedId}\\.(?:png|jpe?g|webp|gif)$`, 'i');
+  return assetPath.test(redirect.pathname) ? redirect.toString() : '';
+}
+
+async function cancelResponseBody(response) {
+  try {
+    if (response?.body) await response.body.cancel();
+  } catch {
+    // The body may already be consumed, errored, or locked by a reader.
+  }
+}
+
+async function fetchPromptImageResponse(rawUrl, { fetchImpl = fetch, signal, headers } = {}) {
+  const fetchUrl = getPromptImageFetchUrl(rawUrl);
+  if (!fetchUrl) throw new Error('Prompt image URL rejected');
+
+  let response = await fetchImpl(fetchUrl, {
+    signal,
+    redirect: 'manual',
+    headers,
+  });
+  if (!REDIRECT_STATUSES.has(response.status)) return response;
+
+  const redirectUrl = resolvePromptImageRedirectUrl(rawUrl, response.headers?.get('location'));
+  await cancelResponseBody(response);
+  if (!redirectUrl) throw new Error('Prompt image redirect rejected');
+
+  response = await fetchImpl(redirectUrl, {
+    signal,
+    redirect: 'manual',
+    headers,
+  });
+  if (REDIRECT_STATUSES.has(response.status)) {
+    await cancelResponseBody(response);
+    throw new Error('Prompt image redirect rejected');
+  }
+  return response;
+}
+
+async function openPromptImageResponse(rawUrl, {
+  fetchImpl = fetch,
+  timeoutMs = 20000,
+  headers,
+} = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), Math.max(1, Number(timeoutMs) || 1));
+  try {
+    const response = await fetchPromptImageResponse(rawUrl, {
+      fetchImpl,
+      signal: controller.signal,
+      headers,
+    });
+    let closed = false;
+    return {
+      response,
+      async close() {
+        if (closed) return;
+        closed = true;
+        clearTimeout(timeout);
+        await cancelResponseBody(response);
+      },
+    };
+  } catch (error) {
+    clearTimeout(timeout);
+    throw error;
+  }
+}
+
+async function readPromptImageBody(response, maxBytes) {
+  const reader = response?.body?.getReader?.();
+  if (!reader) throw new Error('Prompt image response body is unavailable');
+
+  const chunks = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = Buffer.from(value);
+      totalBytes += chunk.length;
+      if (totalBytes > maxBytes) throw new Error('Prompt image is too large');
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks, totalBytes);
+  } finally {
+    try { await reader.cancel(); } catch { /* ignore */ }
+    try { reader.releaseLock(); } catch { /* ignore */ }
+  }
 }
 
 function extensionFromUrlOrContentType(url, contentType = '') {
@@ -115,7 +247,12 @@ function getPromptImageCacheKey(rawUrl, contentType = '') {
 }
 
 module.exports = {
+  fetchPromptImageResponse,
+  getPromptImageFetchUrl,
   getPromptImageCacheKey,
   isAllowedPromptImageUrl,
   normalizePromptImageUrl,
+  openPromptImageResponse,
+  readPromptImageBody,
+  resolvePromptImageRedirectUrl,
 };

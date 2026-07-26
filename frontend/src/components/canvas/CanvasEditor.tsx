@@ -30,7 +30,7 @@ import { CanvasApiKeyMissingError, submitNodeGeneration, pollNodeTask, checkExis
 import { buildNodeGenerationContext, buildNodeGenerationInputs, hydrateNodeGenerationContext } from "./components/canvas-node-generation";
 import { buildNodeMentionReferences } from "./utils/canvas-resource-references";
 import { fitNodeSize } from "./utils/canvas-node-size";
-import { getImageBlob, imageToDataUrl, resolveImageUrl, uploadImage, type UploadedImage } from "./lib/image-storage";
+import { deleteStoredImages, getImageBlob, imageToDataUrl, resolveImageUrl, uploadImage, type UploadedImage } from "./lib/image-storage";
 import { imageReferenceLabel } from "./lib/image-reference-prompt";
 import { compressReferenceDataUrl, readFileAsDataUrl } from "./lib/image-utils";
 import { CanvasNodeType, type CanvasConnection, type CanvasGenerationConfig, type CanvasNodeData, type CanvasNodeMetadata, type ContextMenuState, type ConnectionHandle, type Position, type SelectionBox, type ViewportTransform } from "./types";
@@ -162,25 +162,15 @@ function storedToMetadata(stored: UploadedImage | CanvasGeneratedImage, extra?: 
 }
 
 async function importPromptGalleryImage(url: string, promptContent: string) {
-  try {
-    const response = await fetch(toPromptGalleryImageSrc(url));
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const blob = await response.blob();
-    const stored = await uploadImage(blob);
-    return {
-      downloaded: true,
-      metadata: storedToMetadata(stored, { prompt: promptContent, canvasRole: "reference" }),
-      width: stored.width,
-      height: stored.height,
-    };
-  } catch {
-    return {
-      downloaded: false,
-      metadata: { status: "success" as const, content: url, prompt: promptContent, canvasRole: "reference" as const },
-      width: 320,
-      height: 240,
-    };
-  }
+  const response = await fetch(toPromptGalleryImageSrc(url));
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const blob = await response.blob();
+  const stored = await uploadImage(blob);
+  return {
+    metadata: storedToMetadata(stored, { prompt: promptContent, canvasRole: "reference" }),
+    width: stored.width,
+    height: stored.height,
+  };
 }
 
 async function optimizeImportedPromptContent(prompt: PromptWithKey, referenceImageCount: number): Promise<{ content: string; optimized: boolean }> {
@@ -595,8 +585,21 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
         const imageUrls = prompt.images.filter(Boolean);
         const optimizedPrompt = await optimizeImportedPromptContent(prompt, imageUrls.length);
         const promptContent = optimizedPrompt.content || prompt.content;
-        const importedImages = await Promise.all(imageUrls.map((url) => importPromptGalleryImage(url, promptContent)));
-        const failedCount = importedImages.filter((image) => !image.downloaded).length;
+        const importResults = await Promise.allSettled(
+          imageUrls.map((url) => importPromptGalleryImage(url, promptContent)),
+        );
+        const importedImages = importResults.flatMap((result) => (
+          result.status === "fulfilled" ? [result.value] : []
+        ));
+        const failedImport = importResults.find((result) => result.status === "rejected");
+        if (failedImport) {
+          try {
+            await deleteStoredImages(importedImages.map((image) => image.metadata.storageKey).filter((key): key is string => Boolean(key)));
+          } catch {
+            // Preserve the original import failure if best-effort local cleanup also fails.
+          }
+          throw failedImport.reason;
+        }
         const center = viewportCenterWorld();
         const cols = imageUrls.length > 4 ? 3 : 2;
         const cellWidth = 280;
@@ -669,11 +672,9 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
         setSelectedIds([configNode.id]);
         setPromptGalleryOpen(false);
         showToast(
-          failedCount > 0
-            ? `已导入模板，${failedCount} 张参考图使用远程 URL 兜底`
-            : optimizedPrompt.optimized
-              ? "已从提示词广场导入并优化提示词"
-              : "已从提示词广场导入模板",
+          optimizedPrompt.optimized
+            ? "已从提示词广场导入并优化提示词"
+            : "已从提示词广场导入模板",
           "success",
         );
       } catch {

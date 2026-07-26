@@ -2,9 +2,14 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  fetchPromptImageResponse,
+  getPromptImageFetchUrl,
   getPromptImageCacheKey,
   isAllowedPromptImageUrl,
   normalizePromptImageUrl,
+  openPromptImageResponse,
+  readPromptImageBody,
+  resolvePromptImageRedirectUrl,
 } = require('./prompt-image-cache');
 
 const ATTACHMENT_URL = 'https://github.com/user-attachments/assets/3a056a8d-904e-4b3e-b0d2-b5122758b7f5';
@@ -32,6 +37,197 @@ test('keeps existing raw GitHub and ccode proxy image compatibility', () => {
   assert.equal(isAllowedPromptImageUrl('HTTPS://i.ibb.co/example/image.jpg'), true);
   assert.equal(normalizePromptImageUrl(proxied), raw);
   assert.equal(normalizePromptImageUrl(uppercaseProxy), raw);
+});
+
+test('routes exact Catbox images through the trusted server-side proxy', () => {
+  const catbox = 'https://files.catbox.moe/example.png';
+
+  assert.equal(
+    getPromptImageFetchUrl(catbox),
+    'https://proxy.ccode.vip/https/files.catbox.moe/example.png',
+  );
+  assert.equal(
+    getPromptImageFetchUrl('https://i.ibb.co/example/gallery.jpg'),
+    'https://i.ibb.co/example/gallery.jpg',
+  );
+  assert.equal(getPromptImageFetchUrl(ATTACHMENT_URL), ATTACHMENT_URL);
+});
+
+test('drops URL fragments before fetch and cache identity are calculated', () => {
+  const catbox = 'https://files.catbox.moe/example.png';
+  const raw = 'https://raw.githubusercontent.com/example/gallery/main/image.png';
+
+  assert.equal(normalizePromptImageUrl(`${catbox}#one`), catbox);
+  assert.equal(getPromptImageFetchUrl(`${catbox}#two`), getPromptImageFetchUrl(catbox));
+  assert.equal(getPromptImageCacheKey(`${raw}#one`).hash, getPromptImageCacheKey(`${raw}#two`).hash);
+});
+
+test('allows only a matching GitHub attachment redirect to the fixed asset host', () => {
+  const allowedRedirect = 'https://github-production-user-asset-6210df.s3.amazonaws.com/123/456-3a056a8d-904e-4b3e-b0d2-b5122758b7f5.png?X-Amz-Signature=demo';
+
+  assert.equal(resolvePromptImageRedirectUrl(ATTACHMENT_URL, allowedRedirect), allowedRedirect);
+  assert.equal(
+    resolvePromptImageRedirectUrl(
+      ATTACHMENT_URL,
+      'https://github-production-user-asset-6210df.s3.amazonaws.com/123/456-aaaaaaaa-904e-4b3e-b0d2-b5122758b7f5.png',
+    ),
+    '',
+  );
+  assert.equal(
+    resolvePromptImageRedirectUrl(ATTACHMENT_URL, 'https://evil.example/123/456-3a056a8d-904e-4b3e-b0d2-b5122758b7f5.png'),
+    '',
+  );
+  assert.equal(
+    resolvePromptImageRedirectUrl(
+      'https://raw.githubusercontent.com/example/gallery/main/image.png',
+      allowedRedirect,
+    ),
+    '',
+  );
+  assert.equal(
+    resolvePromptImageRedirectUrl(
+      ATTACHMENT_URL,
+      'https://github-production-user-asset-6210df.s3.amazonaws.com:443/123/456-3a056a8d-904e-4b3e-b0d2-b5122758b7f5.png',
+    ),
+    '',
+  );
+});
+
+test('fetches Catbox through the trusted proxy without following redirects implicitly', async () => {
+  const calls = [];
+  const expected = { status: 200 };
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, options });
+    return expected;
+  };
+
+  const response = await fetchPromptImageResponse(
+    'https://files.catbox.moe/example.png',
+    { fetchImpl, signal: 'signal', headers: { Accept: 'image/*' } },
+  );
+
+  assert.equal(response, expected);
+  assert.deepEqual(calls, [{
+    url: 'https://proxy.ccode.vip/https/files.catbox.moe/example.png',
+    options: { signal: 'signal', redirect: 'manual', headers: { Accept: 'image/*' } },
+  }]);
+});
+
+test('follows exactly one validated GitHub attachment redirect', async () => {
+  const redirectUrl = 'https://github-production-user-asset-6210df.s3.amazonaws.com/123/456-3a056a8d-904e-4b3e-b0d2-b5122758b7f5.png';
+  const calls = [];
+  let firstBodyCancelled = false;
+  const finalResponse = { status: 200 };
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, options });
+    if (calls.length === 1) {
+      return {
+        status: 302,
+        headers: new Headers({ location: redirectUrl }),
+        body: { async cancel() { firstBodyCancelled = true; } },
+      };
+    }
+    return finalResponse;
+  };
+
+  const response = await fetchPromptImageResponse(ATTACHMENT_URL, { fetchImpl });
+
+  assert.equal(response, finalResponse);
+  assert.equal(firstBodyCancelled, true);
+  assert.deepEqual(calls.map(({ url, options }) => ({ url, redirect: options.redirect })), [
+    { url: ATTACHMENT_URL, redirect: 'manual' },
+    { url: redirectUrl, redirect: 'manual' },
+  ]);
+});
+
+test('rejects an untrusted first redirect and every second redirect', async () => {
+  let rejectedBodyCancelled = false;
+  const untrustedFetch = async () => ({
+    status: 302,
+    headers: new Headers({ location: 'https://evil.example/image.png' }),
+    body: { async cancel() { rejectedBodyCancelled = true; } },
+  });
+  await assert.rejects(
+    fetchPromptImageResponse(ATTACHMENT_URL, { fetchImpl: untrustedFetch }),
+    /redirect rejected/,
+  );
+  assert.equal(rejectedBodyCancelled, true);
+
+  let callCount = 0;
+  let secondBodyCancelled = false;
+  const redirectingFetch = async () => {
+    callCount += 1;
+    if (callCount === 1) {
+      return {
+        status: 302,
+        headers: new Headers({
+          location: 'https://github-production-user-asset-6210df.s3.amazonaws.com/123/456-3a056a8d-904e-4b3e-b0d2-b5122758b7f5.png',
+        }),
+        body: { async cancel() {} },
+      };
+    }
+    return {
+      status: 307,
+      headers: new Headers({ location: 'https://evil.example/again.png' }),
+      body: { async cancel() { secondBodyCancelled = true; } },
+    };
+  };
+  await assert.rejects(
+    fetchPromptImageResponse(ATTACHMENT_URL, { fetchImpl: redirectingFetch }),
+    /redirect rejected/,
+  );
+  assert.equal(callCount, 2);
+  assert.equal(secondBodyCancelled, true);
+});
+
+test('stops streaming as soon as a prompt image exceeds the byte limit', async () => {
+  let cancelled = false;
+  let reads = 0;
+  const response = {
+    body: {
+      getReader() {
+        return {
+          async read() {
+            reads += 1;
+            if (reads <= 2) return { done: false, value: Uint8Array.from([1, 2, 3, 4]) };
+            return { done: true };
+          },
+          async cancel() { cancelled = true; },
+          releaseLock() {},
+        };
+      },
+    },
+  };
+
+  await assert.rejects(readPromptImageBody(response, 6), /too large/i);
+  assert.equal(reads, 2);
+  assert.equal(cancelled, true);
+});
+
+test('keeps the fetch timeout active while the response body is streaming', async () => {
+  const fetchImpl = async (_url, { signal }) => ({
+    status: 200,
+    body: new ReadableStream({
+      start(controller) {
+        signal.addEventListener('abort', () => {
+          controller.error(new DOMException('Timed out', 'AbortError'));
+        }, { once: true });
+      },
+    }),
+  });
+  const session = await openPromptImageResponse(
+    'https://i.ibb.co/example/gallery.jpg',
+    { fetchImpl, timeoutMs: 10 },
+  );
+
+  try {
+    await assert.rejects(
+      readPromptImageBody(session.response, 1024),
+      error => error?.name === 'AbortError',
+    );
+  } finally {
+    await session.close();
+  }
 });
 
 test('rejects non-canonical HTTPS spellings tolerated by WHATWG URL parsing', () => {
