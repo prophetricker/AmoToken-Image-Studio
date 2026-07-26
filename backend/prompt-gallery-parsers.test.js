@@ -237,6 +237,87 @@ test('keeps record keys stable across insertion and reordering while resolving d
   assert.equal(new Set(markdownAfter.map(prompt => prompt.uniqueKey)).size, markdownAfter.length);
 });
 
+test('keeps a native-id record key stable as duplicate counts change from one to two to one', () => {
+  const source = PROMPT_GALLERY_SOURCES.find(candidate => candidate.id === 'nanobanana');
+  const original = {
+    id: 'changing-duplicate-count',
+    title: '保持稳定的记录',
+    content: '重复数量变化时键不能漂移。',
+    images: ['https://images.example.com/stable.png'],
+    tags: [],
+  };
+  const duplicate = {
+    id: original.id,
+    title: '后来出现的重复编号',
+    content: '内容不同但使用相同来源编号。',
+    images: ['https://images.example.com/later-duplicate.png'],
+    tags: [],
+  };
+  const parseRecords = records => parseSourceDocuments(source, [{
+    name: 'public/data.json',
+    content: JSON.stringify({ sections: [{ id: 'fixture', prompts: records }] }),
+  }]);
+
+  const oneBefore = parseRecords([original]);
+  const two = parseRecords([duplicate, original]);
+  const oneAfter = parseRecords([original]);
+  const originalWithDuplicate = two.find(prompt => prompt.title === original.title);
+
+  assert.equal(originalWithDuplicate.uniqueKey, oneBefore[0].uniqueKey);
+  assert.equal(oneAfter[0].uniqueKey, oneBefore[0].uniqueKey);
+  assert.notEqual(two[0].uniqueKey, two[1].uniqueKey);
+});
+
+test('resolves Nanobanana relative images against the public data directory', () => {
+  const source = PROMPT_GALLERY_SOURCES.find(candidate => candidate.id === 'nanobanana');
+  const records = ['./images/a.png', '/images/a.png'].map((image, index) => ({
+    id: `relative-image-${index}`,
+    title: `相对图片 ${index}`,
+    content: '验证相对图片资源基址。',
+    images: [image],
+    tags: [],
+  }));
+
+  assert.equal(
+    source.rawBaseUrl,
+    'https://raw.githubusercontent.com/unknowlei/nanobanana-website/main/public',
+  );
+  const prompts = parseSourceDocuments(source, [{
+    name: 'public/data.json',
+    content: JSON.stringify({ sections: [{ id: 'fixture', prompts: records }] }),
+  }]);
+
+  assert.equal(prompts.length, 2);
+  assert.ok(prompts.every(prompt => (
+    prompt.images[0]
+    === 'https://raw.githubusercontent.com/unknowlei/nanobanana-website/main/public/images/a.png'
+  )));
+});
+
+test('preserves URL path case when hashing records without native ids', () => {
+  const source = PROMPT_GALLERY_SOURCES.find(candidate => candidate.id === 'awesome-gpt-image');
+  const record = image => [
+    '### 同名记录',
+    '',
+    `![同名记录](${image})`,
+    '',
+    '**提示词：**',
+    '```text',
+    '相同标题和内容，仅图片路径大小写不同。',
+    '```',
+  ].join('\n');
+  const markdown = [
+    '## 哈希稳定性',
+    record('https://cdn.example.com/images/A.png?Variant=One'),
+    record('https://CDN.EXAMPLE.COM/images/a.png?Variant=One'),
+  ].join('\n\n');
+
+  const prompts = parseSourceDocuments(source, [{ name: 'README.zh-CN.md', content: markdown }]);
+
+  assert.equal(prompts.length, 2);
+  assert.notEqual(prompts[0].uniqueKey, prompts[1].uniqueKey);
+});
+
 test('filters incomplete records and invalid image URLs from partially damaged CRLF input', () => {
   const source = PROMPT_GALLERY_SOURCES.find(candidate => candidate.id === 'awesome-gpt-image');
   const markdown = [

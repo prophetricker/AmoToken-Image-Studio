@@ -119,11 +119,18 @@ function normalizeIdentityValue(value) {
   return String(value || '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
+function normalizeIdentityImage(value) {
+  const url = new URL(String(value || '').trim());
+  url.protocol = url.protocol.toLowerCase();
+  url.hostname = url.hostname.toLowerCase();
+  return url.toString();
+}
+
 function createIdentityHash(title, content, images) {
   const identity = JSON.stringify([
     normalizeIdentityValue(title),
     normalizeIdentityValue(content),
-    images.map(normalizeIdentityValue).sort(),
+    images.map(normalizeIdentityImage).sort(),
   ]);
   return createHash('sha256').update(identity).digest('hex').slice(0, 20);
 }
@@ -147,7 +154,7 @@ function createPrompt(source, values) {
     source: source.id,
     sourceUrl: source.sourceUrl,
     category: values.category || inferPromptCategory(values.title, values.content, tags),
-    nativeId: String(values.nativeId || values.id || '').trim(),
+    nativeId: String(values.nativeId ?? values.id ?? '').trim(),
     identityHash: createIdentityHash(title, content, images),
   };
 }
@@ -165,16 +172,10 @@ function finalizePrompts(source, candidates) {
     deduplicated.push(candidate);
   }
 
-  const nativeIdCounts = new Map();
-  for (const candidate of deduplicated) {
-    if (!candidate.nativeId) continue;
-    nativeIdCounts.set(candidate.nativeId, (nativeIdCounts.get(candidate.nativeId) || 0) + 1);
-  }
-
   return deduplicated.map(({ nativeId, identityHash, ...candidate }) => {
     const encodedNativeId = encodeURIComponent(nativeId);
     const stableId = nativeId
-      ? `${source.id}-${encodedNativeId}${nativeIdCounts.get(nativeId) > 1 ? `-${identityHash}` : ''}`
+      ? `${source.id}-${encodedNativeId}-${identityHash}`
       : `${source.id}-${identityHash}`;
     return {
       id: stableId,

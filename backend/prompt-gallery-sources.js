@@ -24,6 +24,7 @@ const PROMPT_GALLERY_SOURCES = [
     minimumCount: 1000,
     enabled: true,
     documents: [sourceDocument('unknowlei', 'nanobanana-website', 'public/data.json')],
+    rawBaseUrl: `${rawBaseUrl('unknowlei', 'nanobanana-website')}/public`,
   },
   {
     id: 'awesome-gpt-image',
